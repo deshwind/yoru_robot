@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pi-side start for camera + audio only (motors and lidar not needed).
-# Run this on the Pi while your laptop runs ./start_server.sh.
+# Pi-side start: camera + audio only (motors and lidar not needed yet).
+# Run AFTER start_server.sh is already running on the laptop — the Pi
+# connects to the laptop's FastDDS discovery server to find all topics.
 set -e
 cd "$(dirname "$0")"
 
@@ -12,8 +13,9 @@ PI_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "========================================"
 echo "  Pi camera + audio ready"
-echo "  Pi IP: ${PI_IP}"
-echo "  Laptop: source ros_network.env then ./start_server.sh use_joystick:=false"
+echo "  Pi IP:    ${PI_IP}"
+echo "  Discovery server: ${ROS_DISCOVERY_SERVER}"
+echo "  Laptop:   run ./start_server.sh use_joystick:=false"
 echo "========================================"
 echo ""
 

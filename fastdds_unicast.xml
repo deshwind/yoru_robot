@@ -1,37 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- FastDDS unicast peer discovery — fixes one-way multicast on Wi-Fi.
-     Both Pi and laptop must list each other's IP here.
-     Update LAPTOP_IP and PI_IP if your router changes DHCP assignments. -->
-<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-  <profiles>
-    <participant profile_name="default_participant" is_default_profile="true">
-      <rtps>
-        <builtin>
-          <discovery_config>
-            <initialAnnouncements>
-              <count>20</count>
-              <period>
-                <sec>0</sec>
-                <nanosec>100000000</nanosec>
-              </period>
-            </initialAnnouncements>
-          </discovery_config>
-          <initialPeersList>
-            <!-- Laptop (server / dashboard) -->
-            <locator>
-              <udpv4>
-                <address>172.18.16.22</address>
-              </udpv4>
-            </locator>
-            <!-- Pi (robot) -->
-            <locator>
-              <udpv4>
-                <address>172.18.16.26</address>
-              </udpv4>
-            </locator>
-          </initialPeersList>
-        </builtin>
-      </rtps>
-    </participant>
-  </profiles>
-</dds>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <participant profile_name="default_participant" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <initialPeersList>
+          <locator>
+            <udpv4>
+              <address>172.18.16.22</address>
+            </udpv4>
+          </locator>
+          <locator>
+            <udpv4>
+              <address>172.18.16.26</address>
+            </udpv4>
+          </locator>
+        </initialPeersList>
+      </builtin>
+    </rtps>
+  </participant>
+</profiles>
