@@ -42,7 +42,7 @@ def generate_launch_description():
     declare_args = [
         DeclareLaunchArgument(
             'map',
-            default_value=os.path.expanduser('~/dock_ws/maps/main_map.yaml'),
+            default_value=os.path.expanduser('~/yoru_robot/maps/main_map.yaml'),
             description='Saved map for AMCL (mode:=localization)'),
         DeclareLaunchArgument(
             'mode', default_value='localization',

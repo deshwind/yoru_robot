@@ -32,7 +32,7 @@ def generate_launch_description():
 
     declare_map = DeclareLaunchArgument(
         'map',
-        default_value=os.path.expanduser('~/dock_ws/maps/main_map.yaml'),
+        default_value=os.path.expanduser('~/yoru_robot/maps/main_map.yaml'),
         description='Saved map for AMCL localization')
 
     # Robot description without ros2_control (the L298N node drives the motors)

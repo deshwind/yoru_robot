@@ -13,14 +13,13 @@
 # rtsp_url, room_id and calibration, and launch with use_cctv2:=true.
 yolo_cctv1:
   ros__parameters:
-    source_type: rtsp               # rtsp for CCTV, usb for the robot camera
-    rtsp_url: rtsp://192.168.1.100:554/stream1   # CHANGE to your CCTV camera
+    source_type: usb                # laptop webcam as room/CCTV camera
     device_index: 0
-    model_path: yolov8n.pt          # use the NCNN-exported custom model on the Pi
-    use_coco_class_map: true        # set false once the 6-class model is trained
+    model_path: yolov8n.pt
+    use_coco_class_map: true
     confidence_threshold: 0.4
     input_size: 640
-    process_hz: 2.0                 # Pi 4 CPU budget; raise after NCNN export
+    process_hz: 5.0
     publish_debug_image: true       # annotated frame doubles as email evidence
     detections_topic: /compliance/cctv1/detections
     debug_image_topic: /compliance/cctv1/debug_image

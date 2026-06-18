@@ -30,11 +30,12 @@ import math
 import cv2
 import numpy as np
 import rclpy
+from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy)
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Image, Joy
 from std_msgs.msg import Bool, Float32, String
 from tf2_ros import Buffer, TransformListener
 
@@ -61,6 +62,13 @@ class DashboardNode(Node):
         self.drive_cmd = (0.0, 0.0)
         self.drive_time = 0.0
         self.estop_until = 0.0
+
+        # Camera feeds
+        self.bridge = CvBridge()
+        self.cctv_jpg = b''
+        self.robot_jpg = b''
+        self.cctv_seen = 0.0
+        self.robot_seen = 0.0
 
         self.pause_pub = self.create_publisher(Bool, '/compliance/autonomy_paused', 10)
         self.home_pub = self.create_publisher(Bool, '/compliance/return_to_base', 10)
@@ -105,6 +113,10 @@ class DashboardNode(Node):
         self.create_subscription(Float32, '/compliance/battery_level',
                                  self.battery_callback, 10)
         self.create_subscription(Joy, '/joy', self.joy_callback, 10)
+        self.create_subscription(Image, '/compliance/cctv1/debug_image',
+                                 self.cctv_callback, 1)
+        self.create_subscription(Image, '/camera/image_raw',
+                                 self.robot_cam_callback, 1)
 
         self.create_timer(0.1, self.drive_tick)  # 10 Hz drive/e-stop keepalive
 
@@ -153,6 +165,32 @@ class DashboardNode(Node):
     def joy_callback(self, _msg):
         with self.lock:
             self.state['joy_seen'] = time.monotonic()
+
+    def _img_to_jpg(self, msg):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # Resize to max 640px wide to keep bandwidth reasonable
+            h, w = frame.shape[:2]
+            if w > 640:
+                frame = cv2.resize(frame, (640, int(h * 640 / w)))
+            ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            return buf.tobytes() if ok else b''
+        except Exception:
+            return b''
+
+    def cctv_callback(self, msg):
+        jpg = self._img_to_jpg(msg)
+        with self.lock:
+            if jpg:
+                self.cctv_jpg = jpg
+            self.cctv_seen = time.monotonic()
+
+    def robot_cam_callback(self, msg):
+        jpg = self._img_to_jpg(msg)
+        with self.lock:
+            if jpg:
+                self.robot_jpg = jpg
+            self.robot_seen = time.monotonic()
 
     def target_callback(self, msg):
         self.latest_target_xy = (round(msg.pose.position.x, 2),
@@ -224,6 +262,16 @@ class DashboardNode(Node):
             'return_to_base': s['base'] or '-',
             'battery': s['battery'],
             'joystick': time.monotonic() - s['joy_seen'] < 2.0,
+        }
+
+    def api_cam_status(self):
+        now = time.monotonic()
+        with self.lock:
+            cctv_seen = self.cctv_seen
+            robot_seen = self.robot_seen
+        return {
+            'cctv': now - cctv_seen < 3.0,
+            'robot': now - robot_seen < 3.0,
         }
 
     def api_incidents(self):
@@ -343,6 +391,40 @@ class DashboardNode(Node):
             def log_message(self, *args):  # silence per-request stderr spam
                 pass
 
+            def _send_jpg(self, jpg):
+                if not jpg:
+                    # Return a 1x1 transparent placeholder so the <img> doesn't break
+                    placeholder = (
+                        b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01'
+                        b'\x00\x01\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06'
+                        b'\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b'
+                        b'\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c'
+                        b'\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\x1e\x1c'
+                        b'=47\x17\x1f\x1f\x1f\xff\xc0\x00\x0b\x08\x00\x01\x00'
+                        b'\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05'
+                        b'\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00'
+                        b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xc4'
+                        b'\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05'
+                        b'\x04\x04\x00\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12'
+                        b'!1A\x06\x13Qa\x07"q\x142\x81\x91\xa1\x08#B\xb1\xc1'
+                        b'\x15R\xd1\xf0$3br\x82\t\n\x16\x17\x18\x19\x1a%&\'()*'
+                        b'456789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x83\x84\x85'
+                        b'\x86\x87\x88\x89\x8a\x92\x93\x94\x95\x96\x97\x98\x99'
+                        b'\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4'
+                        b'\xb5\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8'
+                        b'\xc9\xca\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xe1\xe2'
+                        b'\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf1\xf2\xf3\xf4\xf5'
+                        b'\xf6\xf7\xf8\xf9\xfa\xff\xda\x00\x08\x01\x01\x00\x00'
+                        b'?\x00\xfb\xd4P\x00\x00\x00\x1f\xff\xd9'
+                    )
+                    jpg = placeholder
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(jpg)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(jpg)
+
             def send_json(self, payload, code=HTTPStatus.OK):
                 data = json.dumps(payload).encode()
                 self.send_response(code)
@@ -393,6 +475,16 @@ class DashboardNode(Node):
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     self.wfile.write(png)
+                elif self.path == '/api/cam/status':
+                    self.send_json(node.api_cam_status())
+                elif self.path.startswith('/api/cam/cctv.jpg'):
+                    with node.lock:
+                        jpg = node.cctv_jpg
+                    self._send_jpg(jpg)
+                elif self.path.startswith('/api/cam/robot.jpg'):
+                    with node.lock:
+                        jpg = node.robot_jpg
+                    self._send_jpg(jpg)
                 else:
                     self.send_json({'error': 'not found'}, HTTPStatus.NOT_FOUND)
 

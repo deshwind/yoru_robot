@@ -232,6 +232,27 @@ PAGE_HTML = r"""<!DOCTYPE html>
   .view.active { display:block; }
   .section { margin-top:12px; padding:20px; }
 
+  /* Camera feeds */
+  .cam-grid { display:grid; gap:12px; margin-top:12px;
+              grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr)); }
+  .cam-card { padding:18px; }
+  .cam-header { display:flex; align-items:center; justify-content:space-between;
+                margin-bottom:12px; }
+  .cam-header h2 { font-size:13px; font-weight:600; color:var(--dim);
+                   text-transform:uppercase; letter-spacing:.06em; margin:0; }
+  .cam-dot { width:9px; height:9px; border-radius:50%; flex:none;
+             background:var(--dim); transition:background .4s; }
+  .cam-dot.on  { background:var(--green);
+                 box-shadow:0 0 6px rgba(52,199,89,.7); }
+  .cam-dot.off { background:var(--red); }
+  .cam-status { font-size:12px; font-weight:600; color:var(--dim);
+                display:flex; align-items:center; gap:6px; }
+  .cam-status.on  { color:var(--green); }
+  .cam-status.off { color:var(--red); }
+  .cam-feed { width:100%; border-radius:14px; background:#000;
+              aspect-ratio:16/9; object-fit:contain; display:block;
+              border:1px solid var(--hairline); }
+
   /* Bottom tab bar on phones */
   #tabbar { display:none; }
   @media (max-width:760px) {
@@ -255,6 +276,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
     .stat .value { font-size:19px; }
     .topbar { padding:12px 14px; }
     .panel { padding:16px; }
+    .cam-grid { grid-template-columns:1fr; }
   }
 </style>
 </head>
@@ -280,6 +302,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     </div>
     <button class="navbtn active" data-view="control" onclick="go('control')">
       <span class="ic">&#127918;</span> Control</button>
+    <button class="navbtn" data-view="cameras" onclick="go('cameras')">
+      <span class="ic">&#128247;</span> Cameras</button>
     <button class="navbtn" data-view="map" onclick="go('map')">
       <span class="ic">&#128506;</span> Map</button>
     <button class="navbtn" data-view="history" onclick="go('history')">
@@ -332,6 +356,35 @@ PAGE_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- ================= CAMERAS ================= -->
+    <div id="view-cameras" class="view">
+      <div class="cam-grid">
+
+        <div class="cam-card glass">
+          <div class="cam-header">
+            <h2>&#128249;&nbsp; CCTV &mdash; Room Camera (Laptop)</h2>
+            <div class="cam-status off" id="cctv-status">
+              <div class="cam-dot off" id="cctv-dot"></div>
+              <span id="cctv-label">Disconnected</span>
+            </div>
+          </div>
+          <img id="cctv-img" class="cam-feed" alt="CCTV feed" src="">
+        </div>
+
+        <div class="cam-card glass">
+          <div class="cam-header">
+            <h2>&#129302;&nbsp; Robot Camera (Pi HQ)</h2>
+            <div class="cam-status off" id="robot-status">
+              <div class="cam-dot off" id="robot-dot"></div>
+              <span id="robot-label">Disconnected</span>
+            </div>
+          </div>
+          <img id="robot-img" class="cam-feed" alt="Robot camera" src="">
+        </div>
+
+      </div>
+    </div>
+
     <!-- ================= MAP ================= -->
     <div id="view-map" class="view">
       <div class="panel glass">
@@ -379,6 +432,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
   <nav id="tabbar" class="glass">
     <button class="active" data-view="control" onclick="go('control')">
       <span class="ic">&#127918;</span>Control</button>
+    <button data-view="cameras" onclick="go('cameras')">
+      <span class="ic">&#128247;</span>Cameras</button>
     <button data-view="map" onclick="go('map')">
       <span class="ic">&#128506;</span>Map</button>
     <button data-view="history" onclick="go('history')">
@@ -434,7 +489,8 @@ async function login(pwArg) {
 }
 
 /* ------------- navigation ------------- */
-const TITLES = { control:'Control', map:'Live Map', history:'Violation History' };
+const TITLES = { control:'Control', cameras:'Cameras',
+                 map:'Live Map', history:'Violation History' };
 function go(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-' + view).classList.add('active');
@@ -443,6 +499,7 @@ function go(view) {
   document.getElementById('viewTitle').textContent = TITLES[view];
   if (view === 'map') { mapVisible = true; loadMapInfo(true); }
   else mapVisible = false;
+  camVisible = (view === 'cameras');
 }
 
 /* ------------- status ------------- */
@@ -705,9 +762,37 @@ async function clearCostmaps() {
 
 window.addEventListener('resize', () => { if (imgReady && mapVisible) drawMap(); });
 
+/* ------------- camera feeds ------------- */
+let camVisible = false;
+let camTick = 0;
+
+function setCamStatus(id, online) {
+  const dot = document.getElementById(id + '-dot');
+  const lbl = document.getElementById(id + '-label');
+  const bar = document.getElementById(id + '-status');
+  dot.className = 'cam-dot ' + (online ? 'on' : 'off');
+  bar.className = 'cam-status ' + (online ? 'on' : 'off');
+  lbl.textContent = online ? 'Connected' : 'Disconnected';
+}
+
+async function refreshCams() {
+  if (!camVisible) return;
+  try {
+    const s = await api('/api/cam/status');
+    setCamStatus('cctv', s.cctv);
+    setCamStatus('robot', s.robot);
+  } catch (e) { /* ignore */ }
+
+  // Refresh images by busting cache; browser loads in background
+  const t = ++camTick;
+  document.getElementById('cctv-img').src = '/api/cam/cctv.jpg?t=' + t;
+  document.getElementById('robot-img').src = '/api/cam/robot.jpg?t=' + t;
+}
+
 setInterval(refresh, 2000);
 setInterval(loadIncidents, 5000);
 setInterval(() => loadMapInfo(false), 1000);
+setInterval(refreshCams, 350);
 
 const hashParams = new URLSearchParams(location.hash.slice(1));
 const startView = hashParams.get('view');

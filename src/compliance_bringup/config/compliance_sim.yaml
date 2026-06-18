@@ -10,7 +10,7 @@ yolo_cctv1:
   ros__parameters:
     source_type: ros_topic
     ros_topic: /cctv1/image_raw
-    model_path: /home/desh/dock_ws/yolov8n.pt
+    model_path: /home/desh/yoru_robot/yolov8n.pt
     use_coco_class_map: true
     confidence_threshold: 0.4
     input_size: 640
@@ -75,7 +75,7 @@ yolo_cctv2:
   ros__parameters:
     source_type: ros_topic
     ros_topic: /cctv2/image_raw
-    model_path: /home/desh/dock_ws/yolov8n.pt
+    model_path: /home/desh/yoru_robot/yolov8n.pt
     use_coco_class_map: true
     confidence_threshold: 0.4
     input_size: 640
