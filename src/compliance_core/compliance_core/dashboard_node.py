@@ -35,7 +35,7 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy)
-from sensor_msgs.msg import Image, Joy
+from sensor_msgs.msg import CompressedImage, Image, Joy
 from std_msgs.msg import Bool, Float32, String
 from tf2_ros import Buffer, TransformListener
 
@@ -117,7 +117,7 @@ class DashboardNode(Node):
                              durability=DurabilityPolicy.VOLATILE)
         self.create_subscription(Image, '/compliance/cctv1/debug_image',
                                  self.cctv_callback, cam_qos)
-        self.create_subscription(Image, '/camera/image_raw',
+        self.create_subscription(CompressedImage, '/camera/image_raw/compressed',
                                  self.robot_cam_callback, cam_qos)
 
         self.create_timer(0.1, self.drive_tick)  # 10 Hz drive/e-stop keepalive
@@ -171,13 +171,28 @@ class DashboardNode(Node):
     def _img_to_jpg(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            # Resize to max 640px wide to keep bandwidth reasonable
             h, w = frame.shape[:2]
             if w > 640:
                 frame = cv2.resize(frame, (640, int(h * 640 / w)))
             ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             return buf.tobytes() if ok else b''
-        except Exception:
+        except Exception as e:
+            self.get_logger().warn(f'img_to_jpg failed: {e}', throttle_duration_sec=5.0)
+            return b''
+
+    def _compressed_to_jpg(self, msg):
+        try:
+            arr = np.frombuffer(msg.data, dtype=np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return b''
+            h, w = frame.shape[:2]
+            if w > 640:
+                frame = cv2.resize(frame, (640, int(h * 640 / w)))
+            ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            return buf.tobytes() if ok else b''
+        except Exception as e:
+            self.get_logger().warn(f'compressed_to_jpg failed: {e}', throttle_duration_sec=5.0)
             return b''
 
     def cctv_callback(self, msg):
@@ -188,7 +203,7 @@ class DashboardNode(Node):
             self.cctv_seen = time.monotonic()
 
     def robot_cam_callback(self, msg):
-        jpg = self._img_to_jpg(msg)
+        jpg = self._compressed_to_jpg(msg)
         with self.lock:
             if jpg:
                 self.robot_jpg = jpg
