@@ -113,10 +113,12 @@ class DashboardNode(Node):
         self.create_subscription(Float32, '/compliance/battery_level',
                                  self.battery_callback, 10)
         self.create_subscription(Joy, '/joy', self.joy_callback, 10)
+        cam_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT,
+                             durability=DurabilityPolicy.VOLATILE)
         self.create_subscription(Image, '/compliance/cctv1/debug_image',
-                                 self.cctv_callback, 1)
+                                 self.cctv_callback, cam_qos)
         self.create_subscription(Image, '/camera/image_raw',
-                                 self.robot_cam_callback, 1)
+                                 self.robot_cam_callback, cam_qos)
 
         self.create_timer(0.1, self.drive_tick)  # 10 Hz drive/e-stop keepalive
 
