@@ -3,13 +3,20 @@
 Detects objects from one of four camera sources (ROS topic / USB / RTSP /
 video file) and publishes vision_msgs/Detection2DArray in pixel coordinates.
 
-With the stock COCO model only 'person' (and confounders such as
-'cell phone') are available; the custom six-class model
-(person, cigarette, vape_device, smoke_vapour, hand_mouth_gesture, hand_face)
-is dropped in via the 'model_path' parameter once trained.
+Two models can run on the same frame and their detections are merged:
+  - the primary model (COCO yolov8n by default) supplies 'person' and the
+    confounders (C7) via COCO_CLASS_MAP;
+  - an optional 'smoking_model_path' model supplies the violation classes
+    (cigarette / vape_device / smoke_vapour) that the confirmation pipeline
+    keys off. A ready-made cigarette detector is fetched by
+    ./download_smoking_model.sh -> cigarette_yolo.pt.
+
+The fully custom six-class model can still replace the primary model via
+'model_path' once trained (set use_coco_class_map:=false).
 """
 
 import json
+import os
 
 import rclpy
 from rclpy.node import Node
@@ -31,6 +38,30 @@ COCO_CLASS_MAP = {
     'bottle': 'straw',
 }
 
+# Map a pretrained smoking model's class names to the project vocabulary.
+# Lower-cased lookup so model label casing does not matter. Override per
+# deployment with the 'smoking_class_map' parameter (a JSON object string).
+DEFAULT_SMOKING_CLASS_MAP = {
+    'cigarette': 'cigarette',
+    'cig': 'cigarette',
+    'cigar': 'cigarette',
+    'smoking': 'cigarette',
+    'smoke_cig': 'cigarette',
+    'vape': 'vape_device',
+    'vaping': 'vape_device',
+    'vape_device': 'vape_device',
+    'e-cigarette': 'vape_device',
+    'ecig': 'vape_device',
+    'smoke': 'smoke_vapour',
+    'smoke_vapour': 'smoke_vapour',
+    'vapour': 'smoke_vapour',
+    'vapor': 'smoke_vapour',
+}
+
+# Classes that raise the smoking alert (devices; smoke_vapour is only
+# supporting evidence in the confirmation node, so it is not an alert on its own).
+ALERT_CLASSES = ('cigarette', 'vape_device')
+
 
 class YoloDetectorNode(Node):
 
@@ -50,15 +81,32 @@ class YoloDetectorNode(Node):
         self.declare_parameter('detections_topic', '/compliance/detections')
         self.declare_parameter('debug_image_topic', '/compliance/debug_image')
         self.declare_parameter('use_coco_class_map', True)
+        # Extra model(s) dedicated to smoking/vaping/smoke. Comma-separated to
+        # run several (e.g. a cigarette model and a smoke model). Empty = off.
+        self.declare_parameter('smoking_model_path', '')
+        self.declare_parameter('smoking_confidence_threshold', 0.35)
+        self.declare_parameter('smoking_class_map', '')  # JSON object string; '' = default
 
         self.source_type = self.get_parameter('source_type').value
         self.conf_threshold = self.get_parameter('confidence_threshold').value
+        self.smoking_conf = self.get_parameter('smoking_confidence_threshold').value
         self.input_size = int(self.get_parameter('input_size').value)
         self.use_coco_map = self.get_parameter('use_coco_class_map').value
         process_hz = self.get_parameter('process_hz').value
 
+        self.smoking_class_map = dict(DEFAULT_SMOKING_CLASS_MAP)
+        raw_map = self.get_parameter('smoking_class_map').value
+        if raw_map:
+            try:
+                self.smoking_class_map.update(
+                    {str(k).lower(): v for k, v in json.loads(raw_map).items()})
+            except ValueError:
+                self.get_logger().warn(
+                    'smoking_class_map is not valid JSON; using defaults')
+
         self.bridge = CvBridge()
         self.model = None
+        self.smoking_models = []
         self.capture = None
         self.latest_frame = None
 
@@ -70,7 +118,7 @@ class YoloDetectorNode(Node):
             self.debug_pub = self.create_publisher(
                 Image, self.get_parameter('debug_image_topic').value, 2)
 
-        self._load_model()
+        self._load_models()
 
         if self.source_type == 'ros_topic':
             topic = self.get_parameter('ros_topic').value
@@ -82,18 +130,38 @@ class YoloDetectorNode(Node):
         self.create_timer(1.0 / max(process_hz, 0.5), self.process_frame)
         self.get_logger().info(
             f'YOLO detector ready (model={self.get_parameter("model_path").value}, '
+            f'smoking_model={self.get_parameter("smoking_model_path").value or "off"}, '
             f'source={self.source_type}, publishing {det_topic})')
 
-    def _load_model(self):
-        model_path = self.get_parameter('model_path').value
+    def _load_one(self, path):
         try:
             from ultralytics import YOLO
-            self.model = YOLO(model_path)
+            return YOLO(path)
         except Exception as exc:  # noqa: BLE001 - report and run degraded
             self.get_logger().error(
-                f'Could not load YOLO model "{model_path}": {exc}. '
-                'Node stays alive but publishes no detections.')
-            self.model = None
+                f'Could not load YOLO model "{path}": {exc}')
+            return None
+
+    def _load_models(self):
+        # Primary model: a bare name (e.g. yolov8n.pt) auto-downloads via ultralytics.
+        model_path = self.get_parameter('model_path').value
+        self.model = self._load_one(model_path)
+        if self.model is None:
+            self.get_logger().error(
+                'Primary model unavailable; node stays alive but publishes '
+                'no person/confounder detections.')
+
+        smoking_spec = self.get_parameter('smoking_model_path').value
+        for path in [p.strip() for p in smoking_spec.split(',') if p.strip()]:
+            if not os.path.isfile(path):
+                self.get_logger().warn(
+                    f'smoking_model_path "{path}" not found; skipped. Run '
+                    './download_smoking_model.sh on this machine, then restart.')
+                continue
+            model = self._load_one(path)
+            if model is not None:
+                self.smoking_models.append(model)
+                self.get_logger().info(f'Smoking model loaded: {path}')
 
     def _open_capture(self):
         if self.source_type == 'usb':
@@ -112,8 +180,49 @@ class YoloDetectorNode(Node):
     def image_callback(self, msg):
         self.latest_frame = (self.bridge.imgmsg_to_cv2(msg, 'bgr8'), msg.header)
 
+    def _coco_class_id(self, raw_name):
+        if self.use_coco_map:
+            return COCO_CLASS_MAP.get(raw_name)
+        return raw_name
+
+    def _smoking_class_id(self, raw_name):
+        return self.smoking_class_map.get(raw_name.lower())
+
+    def _append_detections(self, results, array, frame, class_mapper, color):
+        """Maps one model's boxes into 'array' (and onto 'frame' for the debug
+        image). Returns the list of alert-worthy class ids found."""
+        alert = []
+        names = results[0].names
+        for box in results[0].boxes:
+            raw_name = names[int(box.cls[0])]
+            class_id = class_mapper(raw_name)
+            if class_id is None:
+                continue
+
+            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
+            det = Detection2D()
+            det.header = array.header
+            det.bbox.center.position.x = (x1 + x2) / 2.0
+            det.bbox.center.position.y = (y1 + y2) / 2.0
+            det.bbox.size_x = x2 - x1
+            det.bbox.size_y = y2 - y1
+            hyp = ObjectHypothesisWithPose()
+            hyp.hypothesis.class_id = class_id
+            hyp.hypothesis.score = float(box.conf[0])
+            det.results.append(hyp)
+            array.detections.append(det)
+            if class_id in ALERT_CLASSES:
+                alert.append(class_id)
+
+            if self.debug_pub is not None:
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                cv2.putText(frame, f'{class_id} {float(box.conf[0]):.2f}',
+                            (int(x1), max(int(y1) - 5, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        return alert
+
     def process_frame(self):
-        if self.model is None:
+        if self.model is None and not self.smoking_models:
             return
         if self.source_type == 'ros_topic':
             if self.latest_frame is None:
@@ -129,9 +238,6 @@ class YoloDetectorNode(Node):
                 return
             header = None
 
-        results = self.model.predict(
-            frame, imgsz=self.input_size, conf=self.conf_threshold, verbose=False)
-
         array = Detection2DArray()
         if header is not None:
             array.header = header
@@ -139,37 +245,17 @@ class YoloDetectorNode(Node):
             array.header.stamp = self.get_clock().now().to_msg()
             array.header.frame_id = 'camera'
 
-        names = results[0].names
         alert_classes = []
-        for box in results[0].boxes:
-            raw_name = names[int(box.cls[0])]
-            if self.use_coco_map:
-                class_id = COCO_CLASS_MAP.get(raw_name)
-                if class_id is None:
-                    continue
-            else:
-                class_id = raw_name
-
-            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
-            det = Detection2D()
-            det.header = array.header
-            det.bbox.center.position.x = (x1 + x2) / 2.0
-            det.bbox.center.position.y = (y1 + y2) / 2.0
-            det.bbox.size_x = x2 - x1
-            det.bbox.size_y = y2 - y1
-            hyp = ObjectHypothesisWithPose()
-            hyp.hypothesis.class_id = class_id
-            hyp.hypothesis.score = float(box.conf[0])
-            det.results.append(hyp)
-            array.detections.append(det)
-            if class_id in ('cigarette', 'vape_device'):
-                alert_classes.append(class_id)
-
-            if self.debug_pub is not None:
-                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 200, 0), 2)
-                cv2.putText(frame, f'{class_id} {float(box.conf[0]):.2f}',
-                            (int(x1), max(int(y1) - 5, 12)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+        if self.model is not None:
+            results = self.model.predict(
+                frame, imgsz=self.input_size, conf=self.conf_threshold, verbose=False)
+            alert_classes += self._append_detections(
+                results, array, frame, self._coco_class_id, (0, 200, 0))
+        for smoking_model in self.smoking_models:
+            sresults = smoking_model.predict(
+                frame, imgsz=self.input_size, conf=self.smoking_conf, verbose=False)
+            alert_classes += self._append_detections(
+                sresults, array, frame, self._smoking_class_id, (0, 0, 220))
 
         self.det_pub.publish(array)
 

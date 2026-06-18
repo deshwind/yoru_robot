@@ -15,8 +15,14 @@ yolo_cctv1:
   ros__parameters:
     source_type: usb                # laptop webcam as room/CCTV camera
     device_index: 0
-    model_path: yolov8n.pt
+    model_path: yolov8n.pt          # COCO model supplies 'person' + confounders
     use_coco_class_map: true
+    # Extra model(s) supplying the violation classes the confirmation pipeline
+    # keys off: a cigarette detector + a smoke detector (comma-separated, both
+    # run on each frame). Fetch them once with ./download_smoking_model.sh
+    # (needs ultralytics>=8.3 on this machine). Drop one for more speed.
+    smoking_model_path: cigarette_yolo.pt,smoke_yolo.pt
+    smoking_confidence_threshold: 0.35
     confidence_threshold: 0.4
     input_size: 640
     process_hz: 5.0
@@ -36,6 +42,10 @@ confirm_cctv1:
   ros__parameters:
     person_confidence: 0.7
     device_confidence: 0.6
+    smoke_confidence: 0.4           # smoke at the mouth confirms on its own
+    smoke_in_mouth_confirms: true
+    phone_at_mouth_is_vape: true    # COCO sees a vape as a phone; treat it as one
+    vape_phone_confidence: 0.4
     proximity_iou: 0.05
     persistence_frames: 5
     confirm_confidence: 0.6

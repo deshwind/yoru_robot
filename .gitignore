@@ -14,3 +14,8 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Downloaded smoking-detection models (fetched by download_smoking_model.sh)
+cigarette_yolo.pt
+smoke_yolo.pt
+*.part

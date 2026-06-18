@@ -4,12 +4,14 @@ Decision gate of the perception pipeline. Confirms a smoking/vaping event
 only when the multi-criteria framework is satisfied:
 
   C1 person present (conf > 0.7)
-  C2 cigarette or vape device (conf > 0.6)
-  C3 spatial proximity: device overlaps the person's mouth region
+  C2 cigarette or vape device (conf > 0.6), OR smoke exhaled at the mouth
+     (smoke_in_mouth_confirms, conf > smoke_confidence)
+  C3 spatial proximity: the device/smoke overlaps the person's mouth region
   C4 temporal persistence: >= N consecutive frames
   C5 supporting evidence (optional): smoke_vapour / hand_mouth_gesture / hand_face
   C6 tracking consistency: same SORT track ID
   C7 false-positive risk: pen / mobile_phone / straw near mouth -> high risk
+     (unless phone_at_mouth_is_vape: then a phone at the mouth = a vape device)
 
 Confidence = 0.4*device + 0.3*proximity + 0.2*persistence + 0.1*support
 Confirmed when Confidence >= 0.6 AND C1 AND C2 AND risk != high.
@@ -62,6 +64,15 @@ class EventConfirmationNode(Node):
 
         self.declare_parameter('person_confidence', 0.7)
         self.declare_parameter('device_confidence', 0.6)
+        # Smoke at the mouth can confirm on its own (a person exhaling smoke),
+        # not only a visible cigarette/vape device.
+        self.declare_parameter('smoke_confidence', 0.4)
+        self.declare_parameter('smoke_in_mouth_confirms', True)
+        # A vape held to the mouth reads as 'cell phone' to the COCO model.
+        # When enabled, a phone in the mouth region counts as a vape_device
+        # (and is NOT treated as a blocking confounder). Off = original C7.
+        self.declare_parameter('phone_at_mouth_is_vape', False)
+        self.declare_parameter('vape_phone_confidence', 0.4)
         self.declare_parameter('proximity_iou', 0.05)
         self.declare_parameter('persistence_frames', 5)
         self.declare_parameter('confirm_confidence', 0.6)
@@ -87,11 +98,15 @@ class EventConfirmationNode(Node):
     def tracked_callback(self, msg):
         person_conf_min = self.get_parameter('person_confidence').value
         device_conf_min = self.get_parameter('device_confidence').value
+        smoke_conf_min = self.get_parameter('smoke_confidence').value
+        smoke_confirms = self.get_parameter('smoke_in_mouth_confirms').value
+        phone_is_vape = self.get_parameter('phone_at_mouth_is_vape').value
+        vape_phone_conf_min = self.get_parameter('vape_phone_confidence').value
         proximity_iou_min = self.get_parameter('proximity_iou').value
         confirm_at = self.get_parameter('confirm_confidence').value
         uncertain_at = self.get_parameter('uncertain_confidence').value
 
-        persons, devices, supports, confounders = [], [], [], []
+        persons, devices, supports, confounders, smokes, phones = [], [], [], [], [], []
         for det in msg.detections:
             if not det.results:
                 continue
@@ -102,6 +117,11 @@ class EventConfirmationNode(Node):
                 devices.append(det)
             elif cls in SUPPORT_WEIGHTS:
                 supports.append(det)
+                if cls == 'smoke_vapour':
+                    smokes.append(det)
+            elif cls == 'mobile_phone' and phone_is_vape:
+                # Treat a phone-like object as a possible vape, not a confounder
+                phones.append(det)
             elif cls in CONFOUNDER_CLASSES:
                 confounders.append(det)
 
@@ -125,8 +145,50 @@ class EventConfirmationNode(Node):
                     prox = max(min(iou_val / 0.3, 1.0), 0.8 if near_mouth else 0.0)
                     if prox > best_prox:
                         best_device, best_prox = dev, prox
-            c2 = best_device is not None
-            c3 = best_prox > 0.0
+            # C2 + C3 (alternative): a phone-like object at the mouth = vape.
+            best_phone, best_phone_prox = None, 0.0
+            for ph in phones:
+                if ph.results[0].hypothesis.score <= vape_phone_conf_min:
+                    continue
+                iou_val = bbox_iou(person.bbox, ph.bbox)
+                near_mouth = in_mouth_region(person.bbox, ph.bbox)
+                if iou_val > proximity_iou_min or near_mouth:
+                    prox = max(min(iou_val / 0.3, 1.0), 0.8 if near_mouth else 0.0)
+                    if prox > best_phone_prox:
+                        best_phone, best_phone_prox = ph, prox
+
+            # C2 + C3 (alternative): smoke exhaled at this person's mouth.
+            best_smoke, best_smoke_prox = None, 0.0
+            if smoke_confirms:
+                for sm in smokes:
+                    if sm.results[0].hypothesis.score <= smoke_conf_min:
+                        continue
+                    iou_val = bbox_iou(person.bbox, sm.bbox)
+                    near_mouth = in_mouth_region(person.bbox, sm.bbox,
+                                                 region_fraction=0.5)
+                    if iou_val > proximity_iou_min or near_mouth:
+                        prox = max(min(iou_val / 0.3, 1.0), 0.8 if near_mouth else 0.0)
+                        if prox > best_smoke_prox:
+                            best_smoke, best_smoke_prox = sm, prox
+
+            # Unify the violation evidence: a real device wins, then a phone-like
+            # object at the mouth (vape), then smoke exhaled at the mouth.
+            if best_device is not None:
+                event_class = best_device.results[0].hypothesis.class_id
+                evidence_score, evidence_prox, trigger = (
+                    best_device.results[0].hypothesis.score, best_prox, 'device')
+            elif best_phone is not None:
+                event_class = 'vaping'  # phone-like object held at the mouth
+                evidence_score, evidence_prox, trigger = (
+                    best_phone.results[0].hypothesis.score, best_phone_prox, 'phone_vape')
+            elif best_smoke is not None:
+                event_class = 'smoking'  # smoke exhaled at the mouth
+                evidence_score, evidence_prox, trigger = (
+                    best_smoke.results[0].hypothesis.score, best_smoke_prox, 'smoke')
+            else:
+                event_class, evidence_score, evidence_prox, trigger = None, 0.0, 0.0, None
+            c2 = event_class is not None
+            c3 = evidence_prox > 0.0
 
             # C4 / C6: persistence on the same track ID
             if c1 and c2 and c3:
@@ -152,8 +214,7 @@ class EventConfirmationNode(Node):
                     fp_risk = 'high'
                     break
 
-            device_score = best_device.results[0].hypothesis.score if c2 else 0.0
-            confidence = (0.4 * device_score + 0.3 * best_prox
+            confidence = (0.4 * evidence_score + 0.3 * evidence_prox
                           + 0.2 * persistence_score + 0.1 * support_score)
 
             is_confirmed = (confidence >= confirm_at and c1 and c2 and c4
@@ -173,8 +234,8 @@ class EventConfirmationNode(Node):
                     'room': self.get_parameter('room_id').value,
                     'status': status,
                     'confidence': round(confidence, 3),
-                    'event_class': (best_device.results[0].hypothesis.class_id
-                                    if c2 else None),
+                    'event_class': event_class,
+                    'trigger': trigger,  # 'device' | 'smoke'
                     'criteria': {
                         'C1_person': c1, 'C2_device': c2, 'C3_proximity': c3,
                         'C4_persistence': c4, 'C5_support': round(support_score, 2),
@@ -182,8 +243,8 @@ class EventConfirmationNode(Node):
                         'C7_fp_risk': fp_risk,
                     },
                     'scores': {
-                        'device': round(device_score, 3),
-                        'proximity': round(best_prox, 3),
+                        'evidence': round(evidence_score, 3),
+                        'proximity': round(evidence_prox, 3),
                         'persistence': round(persistence_score, 3),
                         'support': round(support_score, 3),
                     },
