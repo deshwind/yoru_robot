@@ -1,0 +1,150 @@
+# Real-robot parameters (Raspberry Pi 4, dissertation Section 5.3).
+# Before first use:
+#   1. Build a map (slam_toolbox), save to ~/dock_ws/maps/
+#   2. Calibrate the CCTV homography:
+#      python3 src/compliance_core/tools/calibrate_homography.py --image frame.jpg --ground ...
+#      and paste the matrix + camera pose below.
+#   3. For the Pi, export the model to NCNN and point model_path at the folder:
+#      python3 training/train_and_evaluate.py --export best.pt
+
+# Single CCTV pipeline on hardware (launch real_robot.launch.py passes
+# use_cctv2:=false). For a second real camera, copy this block as
+# yolo_cctv2/tracking_cctv2/confirm_cctv2/transform_cctv2 with its own
+# rtsp_url, room_id and calibration, and launch with use_cctv2:=true.
+yolo_cctv1:
+  ros__parameters:
+    source_type: rtsp               # rtsp for CCTV, usb for the robot camera
+    rtsp_url: rtsp://192.168.1.100:554/stream1   # CHANGE to your CCTV camera
+    device_index: 0
+    model_path: yolov8n.pt          # use the NCNN-exported custom model on the Pi
+    use_coco_class_map: true        # set false once the 6-class model is trained
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 2.0                 # Pi 4 CPU budget; raise after NCNN export
+    publish_debug_image: true       # annotated frame doubles as email evidence
+    detections_topic: /compliance/cctv1/detections
+    debug_image_topic: /compliance/cctv1/debug_image
+
+tracking_cctv1:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 5
+    input_topic: /compliance/cctv1/detections
+    output_topic: /compliance/cctv1/tracked
+    track_id_prefix: c1_
+
+confirm_cctv1:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv1/tracked
+    output_topic: /compliance/cctv1/confirmed
+    room_id: room_1                 # CHANGE per deployment location
+
+transform_cctv1:
+  ros__parameters:
+    method: homography
+    input_topic: /compliance/cctv1/confirmed
+    image_width: 640
+    image_height: 480
+    # Paste the output of tools/calibrate_homography.py here:
+    homography: [1.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0,
+                 0.0, 0.0, 1.0]
+    camera_yaw_2d: 0.0              # ground-origin pose in the map frame
+    camera_xy_2d: [0.0, 0.0]
+    max_target_range: 15.0
+
+nav2_goal_sender_node:
+  ros__parameters:
+    safe_stopping_distance: 2.0
+    goal_cooldown: 30.0
+    goal_timeout: 60.0
+    target_max_age: 5.0
+
+compliance_fsm_node:
+  ros__parameters:
+    events_topics: ['/compliance/cctv1/confirmed']
+    monitor_confirm_duration: 5.0
+    pa_warning_duration: 30.0
+    approach_timeout: 60.0
+    direct_warning_duration: 30.0
+    logging_duration: 2.0
+    safe_stop_duration: 3.0
+    compliance_clear_duration: 10.0
+    cooldown_duration: 60.0
+    obstacle_stop_distance: 0.35
+    target_lost_timeout: 5.0
+
+audio_warning_node:
+  ros__parameters:
+    use_audio: true
+    aplay_device: default
+
+incident_logger_node:
+  ros__parameters:
+    room_id: unknown                # fallback; incidents carry their own room
+    retention_days: 30
+
+incident_emailer_node:
+  ros__parameters:
+    enabled: true
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    sender_email: deshwind02@gmail.com
+    recipient_email: deshwind02@gmail.com
+    # SECURITY: prefer  export COMPLIANCE_EMAIL_PASSWORD=...  over this file.
+    # Revoke and regenerate this app password after dissertation testing!
+    app_password: "txra ibcn qepf sljc"
+    robot_camera_topic: /camera/image_raw   # robot USB camera on the Pi
+    cctv_debug_topics: ['/compliance/cctv1/debug_image']
+    cctv_rooms: ['room_1']
+    retention_days: 30
+    closeup_delay: 1.5
+    min_email_interval: 30.0
+
+patrol_node:
+  ros__parameters:
+    enabled: false                  # enable after mapping; set map-frame waypoints
+    waypoints: [1.0, 0.0, 0.0]
+
+return_to_base_node:
+  ros__parameters:
+    bases: [0.0, 0.0, 0.0]          # charging dock pose(s) in the map frame
+    battery_threshold: 20.0
+
+l298n_driver_node:
+  ros__parameters:
+    ena_pin: 12
+    in1_pin: 5
+    in2_pin: 6
+    enb_pin: 13
+    in3_pin: 20
+    in4_pin: 21
+    left_encoder_pin: 17
+    right_encoder_pin: 27
+    pwm_frequency: 1000
+    encoder_ticks_per_rev: 40
+    wheel_radius: 0.033
+    wheel_separation: 0.297
+    max_wheel_speed: 0.3
+    kp: 2.0
+    ki: 0.1
+    kd: 0.5
+    cmd_vel_topic: /diff_cont/cmd_vel_unstamped   # twist_mux output
+
+admin_joy_node:
+  ros__parameters:
+    pause_button: 9                 # PS4 OPTIONS: pause/resume autonomy
+    home_button: 2                  # PS4 TRIANGLE: return to base
+
+dashboard_node:
+  ros__parameters:
+    port: 8080
+    admin_password: "desh"   # CHANGE this; used to log in to the web console
+    drive_speed: 0.2
+    turn_speed: 0.8

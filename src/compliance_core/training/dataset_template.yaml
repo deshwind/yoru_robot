@@ -1,0 +1,17 @@
+# Six-class dataset definition (dissertation Section 3.7, Table 3).
+# Layout expected by ultralytics:
+#   datasets/compliance_smoking_v1/
+#     images/{train,val,test}/*.jpg
+#     labels/{train,val,test}/*.txt   (YOLO format: class cx cy w h, normalised)
+path: ./datasets/compliance_smoking_v1
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: person
+  1: cigarette
+  2: vape_device
+  3: smoke_vapour
+  4: hand_mouth_gesture
+  5: hand_face

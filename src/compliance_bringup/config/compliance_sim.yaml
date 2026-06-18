@@ -1,0 +1,199 @@
+# Simulation parameters - TWO-ROOM world with one CCTV pipeline per room.
+#
+#   cctv1 (room_a, east):  smoking person (scenario publisher injects device)
+#   cctv2 (room_b, west):  walking person (must never escalate)
+#
+# Camera poses/intrinsics MUST match worlds/two_room_world.world.
+
+# ---------------- Room A pipeline (cctv1) ----------------
+yolo_cctv1:
+  ros__parameters:
+    source_type: ros_topic
+    ros_topic: /cctv1/image_raw
+    model_path: /home/desh/dock_ws/yolov8n.pt
+    use_coco_class_map: true
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 5.0
+    publish_debug_image: true
+    detections_topic: /compliance/cctv1/detections_yolo   # scenario merges these
+    debug_image_topic: /compliance/cctv1/debug_image
+
+scenario_publisher_node:
+  ros__parameters:
+    mode: auto                      # augment real YOLO persons, else synthetic
+    scenario_type: smoking          # smoking | vaping | false_positive | target_loss
+    start_delay: 30.0
+    publish_hz: 10.0
+    yolo_topic: /compliance/cctv1/detections_yolo
+    output_topic: /compliance/cctv1/detections
+    image_width: 640
+    image_height: 480
+    person_pixel_x: 320.0           # fallback synthetic person, projects ~(3.0, 0)
+    person_pixel_y: 240.0
+    person_bbox_w: 60.0
+    person_bbox_h: 150.0
+    camera_frame: cctv1_link_optical
+    comply_after_stage: DIRECT_WARNING
+    comply_delay: 6.0
+
+tracking_cctv1:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv1/detections
+    output_topic: /compliance/cctv1/tracked
+    track_id_prefix: c1_
+
+confirm_cctv1:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv1/tracked
+    output_topic: /compliance/cctv1/confirmed
+    room_id: room_a
+
+transform_cctv1:
+  ros__parameters:
+    method: pinhole
+    input_topic: /compliance/cctv1/confirmed
+    image_width: 640
+    image_height: 480
+    horizontal_fov: 1.3
+    camera_position: [5.8, 0.0, 2.5]
+    camera_rpy: [0.0, 0.55, 3.14159]
+    floor_z: 0.0
+    max_target_range: 15.0
+
+# ---------------- Room B pipeline (cctv2) ----------------
+yolo_cctv2:
+  ros__parameters:
+    source_type: ros_topic
+    ros_topic: /cctv2/image_raw
+    model_path: /home/desh/dock_ws/yolov8n.pt
+    use_coco_class_map: true
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 5.0
+    publish_debug_image: true
+    detections_topic: /compliance/cctv2/detections        # straight to tracking
+    debug_image_topic: /compliance/cctv2/debug_image
+
+tracking_cctv2:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv2/detections
+    output_topic: /compliance/cctv2/tracked
+    track_id_prefix: c2_
+
+confirm_cctv2:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv2/tracked
+    output_topic: /compliance/cctv2/confirmed
+    room_id: room_b
+
+transform_cctv2:
+  ros__parameters:
+    method: pinhole
+    input_topic: /compliance/cctv2/confirmed
+    image_width: 640
+    image_height: 480
+    horizontal_fov: 1.3
+    camera_position: [-5.8, 0.0, 2.5]
+    camera_rpy: [0.0, 0.55, 0.0]
+    floor_z: 0.0
+    max_target_range: 15.0
+
+# ---------------- Shared nodes ----------------
+nav2_goal_sender_node:
+  ros__parameters:
+    safe_stopping_distance: 2.0     # social standoff (Section 2.7); face in frame
+    goal_cooldown: 10.0
+    goal_timeout: 60.0
+    target_max_age: 5.0
+
+compliance_fsm_node:
+  ros__parameters:
+    events_topics: ['/compliance/cctv1/confirmed', '/compliance/cctv2/confirmed']
+    monitor_confirm_duration: 3.0
+    pa_warning_duration: 10.0
+    approach_timeout: 60.0
+    direct_warning_duration: 16.0   # > comply_delay + compliance_clear_duration
+    logging_duration: 2.0
+    safe_stop_duration: 3.0
+    compliance_clear_duration: 8.0
+    cooldown_duration: 60.0
+    obstacle_stop_distance: 0.35
+    target_lost_timeout: 5.0
+
+audio_warning_node:
+  ros__parameters:
+    use_audio: true                 # speaks via espeak-ng, else plays gTTS mp3
+    espeak_speed: 140
+    espeak_amplitude: 200
+
+incident_logger_node:
+  ros__parameters:
+    room_id: unknown                # fallback; incidents carry their own room
+    retention_days: 30
+
+incident_emailer_node:
+  ros__parameters:
+    enabled: true
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    sender_email: deshwind02@gmail.com
+    recipient_email: deshwind02@gmail.com
+    # SECURITY: prefer  export COMPLIANCE_EMAIL_PASSWORD=...  over this file.
+    # Revoke and regenerate this app password after dissertation testing!
+    app_password: "txra ibcn qepf sljc"
+    robot_camera_topic: /camera/image_raw
+    cctv_debug_topics: ['/compliance/cctv1/debug_image',
+                        '/compliance/cctv2/debug_image']
+    cctv_rooms: ['room_a', 'room_b']
+    retention_days: 30
+    closeup_delay: 1.5
+    min_email_interval: 30.0
+
+patrol_node:
+  ros__parameters:
+    enabled: true
+    # x, y, yaw triplets - both rooms, through the doorway
+    # (room A waypoints kept > 2 m from the smoker so the approach goal
+    #  is always an explicit Nav2 goal facing the person)
+    waypoints: [2.5, -2.4, 1.57,
+                2.0, 2.4, 3.14,
+                -3.0, 2.0, -1.57,
+                -3.0, -2.0, 0.0]
+    pause_at_waypoint: 4.0
+    start_delay: 20.0
+
+return_to_base_node:
+  ros__parameters:
+    bases: [0.0, 0.0, 0.0]          # doorway spawn doubles as charging base
+    battery_threshold: 20.0
+
+admin_joy_node:
+  ros__parameters:
+    pause_button: 9                 # PS4 OPTIONS: pause/resume autonomy
+    home_button: 2                  # PS4 TRIANGLE: return to base
+
+dashboard_node:
+  ros__parameters:
+    port: 8080
+    admin_password: "desh"   # CHANGE this; used to log in to the web console
+    drive_speed: 0.2
+    turn_speed: 0.8
