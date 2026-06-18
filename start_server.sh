@@ -12,6 +12,12 @@ cd "$(dirname "$0")"
 source /opt/ros/humble/setup.bash
 source ./ros_network.env
 
+echo "========================================"
+echo "  This laptop:  $(hostname).local  ($(hostname -I | awk '{print $1}'))"
+echo "  Discovery server: ${ROS_DISCOVERY_SERVER}"
+echo "  (the Pi resolves this laptop by name, so its IP can change freely)"
+echo "========================================"
+
 # Start the FastDDS discovery server (lets Pi and laptop find each other
 # reliably on Wi-Fi without depending on multicast).
 pkill -f "fastdds discovery" 2>/dev/null || true
