@@ -764,7 +764,6 @@ window.addEventListener('resize', () => { if (imgReady && mapVisible) drawMap();
 
 /* ------------- camera feeds ------------- */
 let camVisible = false;
-let camTick = 0;
 
 function setCamStatus(id, online) {
   const dot = document.getElementById(id + '-dot');
@@ -775,6 +774,21 @@ function setCamStatus(id, online) {
   lbl.textContent = online ? 'Connected' : 'Disconnected';
 }
 
+async function loadCamFrame(imgId, path) {
+  // <img> cannot send the auth header: fetch the JPEG and use a blob URL
+  try {
+    const r = await fetch(path + '?t=' + Date.now(),
+                          { headers: { 'X-Auth': token } });
+    if (!r.ok) return;
+    const url = URL.createObjectURL(await r.blob());
+    const img = document.getElementById(imgId);
+    const old = img.dataset.blobUrl;
+    img.onload = () => { if (old) URL.revokeObjectURL(old); };
+    img.dataset.blobUrl = url;
+    img.src = url;
+  } catch (e) { /* ignore */ }
+}
+
 async function refreshCams() {
   if (!camVisible) return;
   try {
@@ -782,11 +796,8 @@ async function refreshCams() {
     setCamStatus('cctv', s.cctv);
     setCamStatus('robot', s.robot);
   } catch (e) { /* ignore */ }
-
-  // Refresh images by busting cache; browser loads in background
-  const t = ++camTick;
-  document.getElementById('cctv-img').src = '/api/cam/cctv.jpg?t=' + t;
-  document.getElementById('robot-img').src = '/api/cam/robot.jpg?t=' + t;
+  loadCamFrame('cctv-img', '/api/cam/cctv.jpg');
+  loadCamFrame('robot-img', '/api/cam/robot.jpg');
 }
 
 setInterval(refresh, 2000);
