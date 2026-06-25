@@ -162,16 +162,15 @@ def run_detection(args):
                     plots=True, verbose=False)
     save_dir = str(getattr(res, 'save_dir', ''))
 
-    # Copy the real ultralytics plots into eval/
+    # Copy every plot ultralytics produced (names vary by version): all the
+    # curves, confusion matrices, results.csv and the val_batch* preview images.
     copied = []
-    for name in ('confusion_matrix.png', 'confusion_matrix_normalized.png',
-                 'PR_curve.png', 'F1_curve.png', 'P_curve.png', 'R_curve.png',
-                 'results.png'):
-        src = os.path.join(save_dir, name)
-        if os.path.isfile(src):
-            dst = os.path.join(EVAL, name)
-            shutil.copyfile(src, dst)
-            copied.append(name)
+    if os.path.isdir(save_dir):
+        for name in sorted(os.listdir(save_dir)):
+            if name.lower().endswith(('.png', '.jpg', '.csv')):
+                shutil.copyfile(os.path.join(save_dir, name),
+                                os.path.join(EVAL, name))
+                copied.append(name)
 
     # A styled, readable confusion matrix if the class count is small enough
     try:
