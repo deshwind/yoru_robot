@@ -198,6 +198,24 @@ def plots(rows, latencies, names):
         ax.set_title('Inference latency per image (measured on this machine)')
         ax.set_xlabel('image #'); ax.set_ylabel('latency (ms)'); ax.legend()
         report_style.save(fig, os.path.join(OUT, 'plot_latency'))
+
+    # Scatter: detection confidence vs. bounding-box area, coloured by class
+    if rows:
+        classes = sorted({r['class'] for r in rows})
+        cmap = {c: P[i % len(P)] for i, c in enumerate(classes)}
+        fig, ax = plt.subplots()
+        for c in classes:
+            xs = [(r['x2'] - r['x1']) * (r['y2'] - r['y1'])
+                  for r in rows if r['class'] == c]
+            ys = [r['confidence'] for r in rows if r['class'] == c]
+            ax.scatter(xs, ys, label=c, color=cmap[c], alpha=0.75, s=42,
+                       edgecolor='white', linewidth=0.5)
+        ax.set_xlabel('bounding-box area (px$^2$)')
+        ax.set_ylabel('detection confidence')
+        ax.set_ylim(0, 1.05)
+        ax.set_title('Detection confidence vs. object size (measured)')
+        ax.legend(title='class', fontsize=9)
+        report_style.save(fig, os.path.join(OUT, 'plot_confidence_vs_area'))
     return counts
 
 

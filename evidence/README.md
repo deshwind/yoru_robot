@@ -40,9 +40,10 @@ figures + measured plots.
     --smoking-model cigarette_yolo.pt
 ```
 
-Produces in `evidence/output/`:
-`annotated/*.jpg`, `montage.jpg`, `plot_class_counts.png`,
-`plot_confidence_hist.png`, `plot_latency.png`, `detections.csv`, `summary.json`.
+Produces in `evidence/output/` (plots as PNG + PDF):
+`annotated/*.jpg`, `montage.jpg`, `plot_class_counts`, `plot_confidence_hist`,
+`plot_latency`, `plot_confidence_vs_area` (scatter: confidence vs. box size,
+by class), `detections.csv`, `summary.json`.
 
 ## 2. Simulation run + publication figures (escalation story)
 
@@ -115,7 +116,8 @@ classic confusion matrix + PR / F1 / P / R curves + mAP:
 ./evidence/run_evidence.sh evaluate detection --data /path/to/data.yaml --model best.pt
 ```
 Writes `evidence/output/eval/`: `confusion_matrix.png`, `PR_curve.png`,
-`F1_curve.png`, `P_curve.png`, `R_curve.png`, a styled
+`F1_curve.png`, `P_curve.png`, `R_curve.png`, `pr_scatter_by_class.{png,pdf}`
+(per-class precision-vs-recall scatter), a styled
 `detection_confusion_matrix_styled.{png,pdf}` (when few classes), and
 `detection_metrics.json` (mAP50, mAP50-95, per-class P/R). Label the coco128
 run as *"pretrained yolov8n on the COCO128 public set"* in the report.

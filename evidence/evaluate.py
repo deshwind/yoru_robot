@@ -184,6 +184,29 @@ def run_detection(args):
     except Exception as exc:  # noqa: BLE001
         print(f'(styled matrix skipped: {exc})')
 
+    # Per-class precision-recall scatter (a classic evaluation scatter plot)
+    try:
+        ps, rs = list(res.box.p), list(res.box.r)
+        idx = list(res.box.ap_class_index)
+        if idx:
+            fig, ax = plt.subplots(figsize=(5.6, 5.2))
+            label_pts = len(idx) <= 15
+            for i, ci in enumerate(idx):
+                ax.scatter(rs[i], ps[i], s=70, alpha=0.85,
+                           color=report_style.PALETTE[i % len(report_style.PALETTE)])
+                if label_pts:
+                    ax.annotate(model.names[int(ci)], (rs[i], ps[i]),
+                                fontsize=8, xytext=(4, 4),
+                                textcoords='offset points')
+            ax.set_xlim(0, 1.02); ax.set_ylim(0, 1.02)
+            ax.set_xlabel('Recall'); ax.set_ylabel('Precision')
+            ax.set_title('Per-class precision vs. recall')
+            ax.plot([0, 1], [1, 0], color='#bbbbbb', ls='--', lw=0.8)
+            report_style.save(fig, os.path.join(EVAL, 'pr_scatter_by_class'))
+            copied.append('pr_scatter_by_class.png/.pdf')
+    except Exception as exc:  # noqa: BLE001
+        print(f'(PR scatter skipped: {exc})')
+
     # Metrics
     metrics = {'model': args.model, 'data': args.data, 'split': args.split,
                'mAP50': round(float(res.box.map50), 4),
