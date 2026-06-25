@@ -89,6 +89,39 @@ for LaTeX; PNGs for Word/Docs.
 Screenshot Gazebo, RViz and the admin dashboard (`localhost:8080`) directly
 for the report — the toolkit handles the detection/FSM/analysis figures.
 
+## 2b. Confusion matrices + evaluation metrics
+
+A confusion matrix needs ground truth, so there are two honest paths:
+
+**System-level (no dataset)** — the compliance *decision* against the known
+scenario ground truth (smoking/vaping/target_loss = violation present;
+false_positive = none). Run after capturing the scenarios:
+
+```bash
+./evidence/run_evidence.sh evaluate system
+```
+Writes `evidence/output/eval/`: `system_confusion_matrix.{png,pdf}`,
+`system_metrics.{png,pdf}` (precision/recall/F1/accuracy), `system_metrics.json`.
+Re-run each scenario a few times for larger counts in the matrix.
+
+**Detection-level (labelled dataset)** — real YOLO validation producing the
+classic confusion matrix + PR / F1 / P / R curves + mAP:
+
+```bash
+# public set: ultralytics auto-downloads coco128 (yolov8n is a COCO model)
+./evidence/run_evidence.sh evaluate detection
+
+# your own labelled data (YOLO format + data.yaml):
+./evidence/run_evidence.sh evaluate detection --data /path/to/data.yaml --model best.pt
+```
+Writes `evidence/output/eval/`: `confusion_matrix.png`, `PR_curve.png`,
+`F1_curve.png`, `P_curve.png`, `R_curve.png`, a styled
+`detection_confusion_matrix_styled.{png,pdf}` (when few classes), and
+`detection_metrics.json` (mAP50, mAP50-95, per-class P/R). Label the coco128
+run as *"pretrained yolov8n on the COCO128 public set"* in the report.
+
+All eval figures also appear in the dashboard **Evidence** tab.
+
 ## 3. Incident email + keyframes
 
 The emailer is already in the pipeline. During a `smoking`/`vaping` scenario

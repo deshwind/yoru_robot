@@ -37,7 +37,8 @@ SIM = os.path.join(OUT, 'sim')
 INCIDENTS = os.path.expanduser('~/compliance_robot_logs/incidents.jsonl')
 
 # Image galleries: label -> directory
-GALLERIES = {'annotated': os.path.join(OUT, 'annotated'), 'sim': SIM}
+GALLERIES = {'annotated': os.path.join(OUT, 'annotated'), 'sim': SIM,
+             'eval': os.path.join(OUT, 'eval')}
 
 
 def read_jsonl(path):

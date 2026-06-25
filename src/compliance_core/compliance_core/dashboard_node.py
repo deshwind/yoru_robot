@@ -383,7 +383,7 @@ class DashboardNode(Node):
                         continue
 
         images = {}
-        for label in ('annotated', 'sim'):
+        for label in ('annotated', 'sim', 'eval'):
             d = os.path.join(ev, label)
             if os.path.isdir(d):
                 images[label] = sorted(
@@ -537,7 +537,8 @@ class DashboardNode(Node):
                 label, _, name = rel.partition('/')
                 ev = os.path.expanduser(node.get_parameter('evidence_dir').value)
                 bases = {'annotated': os.path.join(ev, 'annotated'),
-                         'sim': os.path.join(ev, 'sim')}
+                         'sim': os.path.join(ev, 'sim'),
+                         'eval': os.path.join(ev, 'eval')}
                 base = bases.get(label)
                 if (not base or not name or '/' in name or '\\' in name
                         or name.startswith('.')):

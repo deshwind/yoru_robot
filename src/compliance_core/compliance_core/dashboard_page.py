@@ -477,6 +477,9 @@ PAGE_HTML = r"""<!DOCTYPE html>
         <h2>Escalation FSM timeline (simulation)</h2>
         <canvas id="ev-cFsm" height="90"></canvas></div>
       <div class="panel glass" style="margin-top:14px">
+        <h2>Confusion matrices &amp; evaluation</h2>
+        <div class="ev-gal" id="ev-galE"></div></div>
+      <div class="panel glass" style="margin-top:14px">
         <h2>Annotated detections</h2>
         <div class="ev-gal" id="ev-galA"></div></div>
       <div class="panel glass" style="margin-top:14px">
@@ -970,6 +973,7 @@ async function loadEvidence() {
     }
   }
 
+  evGallery('ev-galE', 'eval', (d.images.eval || []).filter(n => n.endsWith('.png')));
   evGallery('ev-galA', 'annotated', d.images.annotated);
   evGallery('ev-galS', 'sim', (d.images.sim || []).filter(n => n.endsWith('.jpg')));
 }
