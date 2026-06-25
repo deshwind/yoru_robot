@@ -92,10 +92,11 @@ For the real robot, the system runs on **two machines on the same Wi-Fi**:
 | **Raspberry Pi 4** (on the robot) | L298N motors + encoders, RPLIDAR, Pi camera, speaker (voice warnings), AMCL localization + Nav2 — the motion loop stays onboard so the robot navigates safely even if Wi-Fi blips | `./start_pi.sh` |
 
 ROS 2 connects the two automatically: both source `ros_network.env`
-(same `ROS_DOMAIN_ID`), and topics/actions/TF flow over the network — no IP
-configuration needed on a home router. (On university Wi-Fi that blocks
-multicast, uncomment the discovery-server lines in `ros_network.env` and set
-your PC's IP.)
+(same `ROS_DOMAIN_ID=42`). A FastDDS **discovery server** on the laptop makes
+discovery reliable on Wi-Fi where multicast is forwarded only one way, and the
+laptop's IP is resolved from its mDNS hostname so the link survives DHCP
+changes — see the **Networking** section below. Topics, actions and TF then
+flow over the network with no manual IP configuration.
 
 ### Check the Pi connection first
 
@@ -145,12 +146,15 @@ light/dark setting, fully responsive on phones. Open **http://\<robot-ip\>:8080*
 terminal at startup) and sign in with the password from the
 `dashboard_node` section of the compliance config (**change the default!**).
 
-Three screens (glass sidebar on desktop, bottom tab bar on phones):
+Five screens (glass sidebar on desktop, bottom tab bar on phones):
 
 - **Control** — live status (mode, FSM activity, room, joystick), mode switch
   (pause autonomy for manual joystick driving ↔ resume the robot's job, synced
   with the controller's OPTIONS button), Return-to-base, EMERGENCY STOP, and a
   touch-friendly virtual joystick (drag to drive)
+- **Cameras** — live CCTV (room camera) and robot (Pi HQ) feeds side by side,
+  each with a Connected/Disconnected badge. Frames are pulled with the auth
+  token via blob URLs (the `<img>` tag cannot send headers).
 - **Map** — the live SLAM map with the robot's position/heading (blue arrow)
   and the latest violation target (red dot). **Relocalise**: tap the robot's
   true position on the map, drag towards its facing direction — publishes
@@ -159,6 +163,11 @@ Three screens (glass sidebar on desktop, bottom tab bar on phones):
 - **History** — statistics (total, compliance rate, last 24 h, per-room
   counts) and a filterable incident table — **metadata only, no photos or
   video are ever served** (keyframes stay on the robot disk)
+- **Evidence** — analytics for the report: KPIs (detections, FPS, latency),
+  charts (detections per class, confidence distribution, incident outcomes,
+  per-room), the escalation FSM timeline, and a clickable gallery of the
+  annotated detections, simulation escalation frames and confusion matrices
+  produced by the `evidence/` toolkit (see below).
 
 ## Admin manual control (wireless joystick)
 
@@ -250,12 +259,181 @@ Then set in the config: `model_path: <path to exported model>` and
    additionally creates natural-voice gTTS files as fallback.
 7. **Run**: `./start_robot.sh map:=/home/desh/dock_ws/maps/my_map.yaml`
 
+## Evidence, figures & results (for the report)
+
+The `evidence/` toolkit turns real runs of the system into publication-quality
+figures (every plot is saved as both a **PNG** for Word/Docs and a **vector
+PDF** for LaTeX), plus an interactive analytics app. Everything runs on the
+**laptop** (which has `ultralytics`, the models and Gazebo). Outputs are written
+under `evidence/output/` (git-ignored — local artifacts you move into the report).
+
+> **Academic-honesty note.** A confusion matrix and accuracy metrics require
+> ground-truth labels. Where there is no labelled dataset, the toolkit reports
+> only *measured* quantities (detection counts, confidence distributions,
+> inference latency/FPS, FSM timings, and a system-decision confusion matrix
+> against known scenario ground truth). It never fabricates accuracy numbers.
+> Detection accuracy curves come from real YOLO validation on a labelled set
+> (the public COCO128 set by default, or your own data) and must be labelled as
+> such in the writeup.
+
+### One-look command reference
+
+| Command | Produces |
+|---|---|
+| `./evidence/run_evidence.sh detections --source samples` | annotated bounding-box images + detector diagnostic plots |
+| `./evidence/run_evidence.sh sim scenario_type:=smoking` | launches the Gazebo scenario (smoking/vaping/false_positive/target_loss) |
+| `./evidence/run_evidence.sh capture --scenario smoking --seconds 120` | captures escalation frames + timelines for that scenario |
+| `./evidence/run_evidence.sh report` | combines all captured scenarios into comparison figures |
+| `./evidence/run_evidence.sh evaluate system` | compliance-decision confusion matrix + P/R/F1/accuracy |
+| `./evidence/run_evidence.sh evaluate detection` | real YOLO confusion matrix + PR/F1/mAP curves (COCO128) |
+| `./evidence/run_evidence.sh app` | interactive analytics web app (http://localhost:8090) |
+
+### 1. Detector evidence — `annotate_detections.py`
+
+Runs the same detector stack the live system uses (COCO YOLOv8n for
+person/confounders + an optional smoking model) over images and measures the
+results. Artifacts in `evidence/output/`:
+
+- `annotated/*.jpg`, `montage.jpg` — bounding-box detection figures (green =
+  person/COCO classes, red = smoking classes, matching the live dashboard).
+- `plot_class_counts.{png,pdf}` — detections per class (bar).
+- `plot_confidence_hist.{png,pdf}` — confidence distribution with the mean.
+- `plot_latency.{png,pdf}` — per-image inference latency and mean FPS *on this
+  machine* (edge-vs-laptop performance evidence).
+- `plot_confidence_vs_area.{png,pdf}` — **scatter** of detection confidence vs.
+  bounding-box area, coloured by class: demonstrates the detector is more
+  confident on larger/closer objects (useful for discussing small-object
+  limitations of CCTV-distance smoking detection).
+- `detections.csv`, `summary.json` — raw per-detection records + aggregates.
+
+### 2. Simulation evidence — `capture_sim_evidence.py`
+
+For each of the four Section 5.1 test scenarios, run the Gazebo sim and capture
+the escalation as it happens (two terminals per scenario):
+
+| Scenario | Ground truth | What it demonstrates |
+|---|---|---|
+| `smoking` | violation present | full escalation: PA warning → approach → direct warning → logging/email |
+| `vaping` | violation present | the pipeline generalises across violation types |
+| `false_positive` | **no** violation | the C1–C7 confirmation logic rejects confounders (phone near mouth) |
+| `target_loss` | violation present | the FSM handles a person leaving mid-escalation |
+
+Each capture writes `evidence/output/sim/<scenario>/`:
+
+- `frame_<STATE>.jpg` — annotated detection frame at every FSM transition
+  (the escalation story, stage by stage) + `montage_states.jpg`.
+- `fsm_timeline.{png,pdf}` — FSM state vs. time (the escalation FSM in action).
+- `confidence_timeline.{png,pdf}` — detection count + max confidence over time
+  with the FSM transitions marked.
+- `timeseries.csv`, `fsm_timeline.csv` — raw data for your own plots.
+- `run.json`, `incidents.json` — run metadata + incidents emitted.
+
+`./evidence/run_evidence.sh report` then combines every captured scenario into
+small-multiple comparison figures in `evidence/output/report/`:
+`fig_fsm_timelines`, `fig_confidence_timelines`, `fig_outcomes_by_scenario`,
+`fig_detection_summary` (all PNG + PDF).
+
+### 3. Confusion matrices & evaluation metrics — `evaluate.py`
+
+**System-level (no dataset, `evaluate system`).** Builds the compliance
+**decision** confusion matrix from the captured scenarios: ground truth
+(violation present vs. not) against whether the pipeline confirmed a violation.
+Outputs `evidence/output/eval/system_confusion_matrix.{png,pdf}`,
+`system_metrics.{png,pdf}` (precision/recall/F1/accuracy) and
+`system_metrics.json`. This is the most relevant evaluation of the *system*
+(does it catch real violations and reject confounders); re-run each scenario a
+few times for larger counts.
+
+**Detection-level (labelled dataset, `evaluate detection`).** Runs real
+ultralytics validation. By default it auto-downloads the public **COCO128**
+set and validates the actual `yolov8n.pt` model; point `--data your.yaml
+--model best.pt` at your own labelled smoking data instead. Outputs to
+`evidence/output/eval/`: the classic `confusion_matrix.png` (+ normalized),
+`PR_curve.png`, `F1_curve.png`, `P_curve.png`, `R_curve.png`,
+`pr_scatter_by_class.{png,pdf}` (**scatter** of per-class precision vs. recall),
+`results.csv`, `val_batch*` prediction previews, and `detection_metrics.json`.
+
+Measured baseline (pretrained YOLOv8n on the COCO128 public set, CPU):
+**mAP@0.5 = 0.603, mAP@0.5:0.95 = 0.444, precision = 0.64, recall = 0.54.**
+This validates the person/COCO detector the system relies on; a smoking-class
+confusion matrix requires a labelled cigarette/vape dataset (`--data your.yaml`).
+
+### 4. Interactive analytics
+
+- `./evidence/run_evidence.sh app` → standalone web app at
+  **http://localhost:8090** (pure Python stdlib + Chart.js): KPIs, charts,
+  FSM timeline and a gallery of every figure — good for a live demo.
+- The same data also appears in the admin dashboard's **Evidence** tab
+  (http://localhost:8080), reading live from `evidence/output/`.
+
+### Output map
+
+```
+evidence/output/
+├── annotated/                 # bounding-box detection images
+├── montage.jpg
+├── plot_class_counts | plot_confidence_hist | plot_latency
+├── plot_confidence_vs_area    # confidence-vs-size scatter        (.png + .pdf each)
+├── detections.csv  summary.json
+├── sim/<scenario>/            # per-scenario: frame_<STATE>.jpg, fsm_timeline,
+│                              #   confidence_timeline, *.csv, run.json
+├── report/                    # cross-scenario comparison figures (.png + .pdf)
+│   fig_fsm_timelines | fig_confidence_timelines |
+│   fig_outcomes_by_scenario | fig_detection_summary
+└── eval/                      # confusion matrices + curves + scatter
+    system_confusion_matrix | system_metrics |
+    confusion_matrix | PR_curve | F1_curve | P_curve | R_curve |
+    pr_scatter_by_class | detection_metrics.json
+```
+
+### Reproduce every figure (laptop)
+
+```bash
+cd ~/yoru_robot && git pull origin main
+colcon build --symlink-install            # if dashboard/launch changed
+
+# detector evidence
+./evidence/run_evidence.sh detections --source samples
+
+# detection accuracy (auto-downloads COCO128, ~10 s after first run)
+./evidence/run_evidence.sh evaluate detection
+
+# per scenario (two terminals), repeat for vaping / false_positive / target_loss
+./evidence/run_evidence.sh sim scenario_type:=smoking          # T1
+./evidence/run_evidence.sh capture --scenario smoking --seconds 120  # T2
+
+# combine scenarios + the system confusion matrix
+./evidence/run_evidence.sh report
+./evidence/run_evidence.sh evaluate system
+
+# browse it all
+./evidence/run_evidence.sh app            # http://localhost:8090
+```
+
+Full details live in [`evidence/README.md`](evidence/README.md).
+
+## Networking (real robot, two machines)
+
+Both machines source `ros_network.env` (same `ROS_DOMAIN_ID=42`). On Wi-Fi that
+forwards multicast asymmetrically (common on home routers), the laptop runs a
+**FastDDS discovery server** (started automatically by `start_server.sh` on
+port 11811) and the Pi connects to it. The laptop's address is resolved from
+its **mDNS hostname** (`*.local`, IPv4-forced) so the link self-heals when DHCP
+hands out a new IP — nothing needs editing when addresses change; only
+`LAPTOP_HOST` in `ros_network.env` must match the laptop's hostname.
+
 ## Repository layout
 
 ```
-dock_ws/
+yoru_robot/
 ├── start_sim.sh / start_robot.sh / start_mapping.sh   # one-command entry points
-├── maps/                       # saved maps (main_map = your prototype map)
+├── start_server.sh / start_pi_minimal.sh              # distributed deployment
+├── ros_network.env                                    # shared ROS 2 / discovery config
+├── evidence/                  # report-evidence toolkit (scripts + README)
+│   ├── annotate_detections.py  capture_sim_evidence.py  evaluate.py
+│   ├── make_report_figures.py  analytics_app.py  report_style.py
+│   └── output/                # generated figures (git-ignored)
+├── maps/                       # saved maps (main_map = the prototype map)
 ├── archive/                    # old prototype files (dock scripts, old maps)
 └── src/
     ├── dockbot/                # robot base (URDF, sim, SLAM/Nav2 configs)
