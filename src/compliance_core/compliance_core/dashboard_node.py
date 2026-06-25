@@ -16,6 +16,7 @@ Features:
 Auth: single admin password (config) -> session token held in server memory.
 """
 
+import csv
 import json
 import os
 import secrets
@@ -52,6 +53,8 @@ class DashboardNode(Node):
         self.declare_parameter('log_dir', os.path.expanduser('~/compliance_robot_logs'))
         self.declare_parameter('drive_speed', 0.2)
         self.declare_parameter('turn_speed', 0.8)
+        self.declare_parameter(
+            'evidence_dir', os.path.expanduser('~/yoru_robot/evidence/output'))
 
         self.lock = threading.Lock()
         self.tokens = set()
@@ -331,6 +334,91 @@ class DashboardNode(Node):
             'incidents': incidents,
         }
 
+    def api_evidence_data(self):
+        """Aggregates report-evidence artifacts (evidence/output/) + the
+        incident log into one JSON payload for the dashboard Evidence tab.
+        Everything is read live from disk so the tab reflects the latest run."""
+        ev = os.path.expanduser(self.get_parameter('evidence_dir').value)
+        log_dir = self.get_parameter('log_dir').value
+
+        incidents = []
+        path = os.path.join(log_dir, 'incidents.jsonl')
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        incidents.append(json.loads(line))
+                    except ValueError:
+                        continue
+        sim_inc = os.path.join(ev, 'sim', 'incidents.json')
+        if os.path.isfile(sim_inc):
+            try:
+                with open(sim_inc, encoding='utf-8') as f:
+                    incidents += json.load(f)
+            except ValueError:
+                pass
+
+        def tally(*keys):
+            out = {}
+            for inc in incidents:
+                val = None
+                for k in keys:
+                    val = val or inc.get(k)
+                val = val or 'unknown'
+                out[val] = out.get(val, 0) + 1
+            return out
+
+        summary = self._read_json(os.path.join(ev, 'summary.json'), {})
+        run = self._read_json(os.path.join(ev, 'sim', 'run.json'), {})
+
+        bins = [0] * 10
+        csv_path = os.path.join(ev, 'detections.csv')
+        if os.path.isfile(csv_path):
+            with open(csv_path, encoding='utf-8') as f:
+                for row in csv.DictReader(f):
+                    try:
+                        c = float(row['confidence'])
+                        bins[min(int(c * 10), 9)] += 1
+                    except (KeyError, ValueError):
+                        continue
+
+        images = {}
+        for label in ('annotated', 'sim'):
+            d = os.path.join(ev, label)
+            if os.path.isdir(d):
+                images[label] = sorted(
+                    n for n in os.listdir(d)
+                    if n.lower().endswith(('.jpg', '.jpeg', '.png')))
+
+        return {
+            'n_incidents': len(incidents),
+            'outcomes': tally('outcome'),
+            'rooms': tally('room', 'room_id'),
+            'events': tally('event_class'),
+            'class_counts': summary.get('class_counts', {}),
+            'conf_bins': bins,
+            'detection_summary': {
+                'images': summary.get('images'),
+                'total_detections': summary.get('total_detections'),
+                'mean_latency_ms': summary.get('mean_latency_ms'),
+                'mean_fps': summary.get('mean_fps'),
+                'primary_model': summary.get('primary_model'),
+                'smoking_model': summary.get('smoking_model'),
+            },
+            'fsm_timeline': run.get('fsm_timeline', []),
+            'images': images,
+        }
+
+    @staticmethod
+    def _read_json(path, default):
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding='utf-8') as f:
+                    return json.load(f)
+            except ValueError:
+                pass
+        return default
+
     def api_set_mode(self, body):
         paused = bool(body.get('paused'))
         self.pause_pub.publish(Bool(data=paused))
@@ -442,6 +530,33 @@ class DashboardNode(Node):
                 self.end_headers()
                 self.wfile.write(jpg)
 
+            def _send_evidence_img(self, rel):
+                """Serves an image from evidence/output/{annotated,sim} only,
+                with a strict name check (no path traversal)."""
+                rel = rel.split('?', 1)[0]
+                label, _, name = rel.partition('/')
+                ev = os.path.expanduser(node.get_parameter('evidence_dir').value)
+                bases = {'annotated': os.path.join(ev, 'annotated'),
+                         'sim': os.path.join(ev, 'sim')}
+                base = bases.get(label)
+                if (not base or not name or '/' in name or '\\' in name
+                        or name.startswith('.')):
+                    self.send_json({'error': 'not found'}, HTTPStatus.NOT_FOUND)
+                    return
+                path = os.path.join(base, name)
+                if not os.path.isfile(path):
+                    self.send_json({'error': 'not found'}, HTTPStatus.NOT_FOUND)
+                    return
+                with open(path, 'rb') as f:
+                    data = f.read()
+                ctype = 'image/png' if name.lower().endswith('.png') else 'image/jpeg'
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(data)
+
             def send_json(self, payload, code=HTTPStatus.OK):
                 data = json.dumps(payload).encode()
                 self.send_response(code)
@@ -492,6 +607,10 @@ class DashboardNode(Node):
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     self.wfile.write(png)
+                elif self.path == '/api/evidence/data':
+                    self.send_json(node.api_evidence_data())
+                elif self.path.startswith('/api/evidence/img/'):
+                    self._send_evidence_img(self.path[len('/api/evidence/img/'):])
                 elif self.path == '/api/cam/status':
                     self.send_json(node.api_cam_status())
                 elif self.path.startswith('/api/cam/cctv.jpg'):
