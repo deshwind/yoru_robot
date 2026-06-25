@@ -158,52 +158,46 @@ def make_montage(annotated_paths, cols=2, cell=480):
 
 
 def plots(rows, latencies, names):
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+    import report_style
+    plt = report_style.apply_style()
+    P = report_style.PALETTE
 
     # Per-class counts
     counts = {}
     for r in rows:
         counts[r['class']] = counts.get(r['class'], 0) + 1
     if counts:
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots()
         ks = list(counts.keys())
-        ax.bar(ks, [counts[k] for k in ks], color='#2d6cdf')
+        ax.bar(ks, [counts[k] for k in ks], color=P[0])
         ax.set_title('Detections per class (measured)')
         ax.set_ylabel('count')
         for i, k in enumerate(ks):
             ax.text(i, counts[k], str(counts[k]), ha='center', va='bottom')
-        fig.tight_layout()
-        fig.savefig(os.path.join(OUT, 'plot_class_counts.png'), dpi=130)
-        plt.close(fig)
+        report_style.save(fig, os.path.join(OUT, 'plot_class_counts'))
 
     # Confidence histogram
     confs = [r['confidence'] for r in rows]
     if confs:
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.hist(confs, bins=20, range=(0, 1), color='#15a36a', edgecolor='white')
-        ax.axvline(np.mean(confs), color='#d83b3b', linestyle='--',
-                   label=f'mean={np.mean(confs):.2f}')
+        fig, ax = plt.subplots()
+        ax.hist(confs, bins=20, range=(0, 1), color=P[2], edgecolor='white')
+        ax.axvline(float(np.mean(confs)), color=P[1], linestyle='--',
+                   lw=2, label=f'mean = {np.mean(confs):.2f}')
         ax.set_title('Detection confidence distribution (measured)')
         ax.set_xlabel('confidence'); ax.set_ylabel('detections'); ax.legend()
-        fig.tight_layout()
-        fig.savefig(os.path.join(OUT, 'plot_confidence_hist.png'), dpi=130)
-        plt.close(fig)
+        report_style.save(fig, os.path.join(OUT, 'plot_confidence_hist'))
 
     # Inference latency / FPS
     if latencies:
         ms = [l * 1000 for l in latencies]
-        mean_fps = 1.0 / np.mean(latencies)
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(range(1, len(ms) + 1), ms, marker='o', color='#7b2dd6')
-        ax.axhline(np.mean(ms), color='#d83b3b', linestyle='--',
-                   label=f'mean={np.mean(ms):.0f} ms  ({mean_fps:.1f} FPS)')
+        mean_fps = 1.0 / float(np.mean(latencies))
+        fig, ax = plt.subplots()
+        ax.plot(range(1, len(ms) + 1), ms, marker='o', color=P[3], lw=2)
+        ax.axhline(float(np.mean(ms)), color=P[1], linestyle='--', lw=2,
+                   label=f'mean = {np.mean(ms):.0f} ms  ({mean_fps:.1f} FPS)')
         ax.set_title('Inference latency per image (measured on this machine)')
         ax.set_xlabel('image #'); ax.set_ylabel('latency (ms)'); ax.legend()
-        fig.tight_layout()
-        fig.savefig(os.path.join(OUT, 'plot_latency.png'), dpi=130)
-        plt.close(fig)
+        report_style.save(fig, os.path.join(OUT, 'plot_latency'))
     return counts
 
 

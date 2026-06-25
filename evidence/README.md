@@ -44,28 +44,50 @@ Produces in `evidence/output/`:
 `annotated/*.jpg`, `montage.jpg`, `plot_class_counts.png`,
 `plot_confidence_hist.png`, `plot_latency.png`, `detections.csv`, `summary.json`.
 
-## 2. Simulation run + screenshots (escalation story)
+## 2. Simulation run + publication figures (escalation story)
 
-Three terminals:
+Run each scenario in turn. Two terminals per scenario:
 
 ```bash
-# T1 — Gazebo + full pipeline + scenario injection (smoking / vaping / false_positive / target_loss)
+# T1 — Gazebo + full pipeline + scenario injection
 ./evidence/run_evidence.sh sim scenario_type:=smoking
 
-# T2 — capture annotated frames at each FSM stage + timeline plots
-./evidence/run_evidence.sh capture --seconds 120
-
-# T3 (optional) — live analytics while it runs
-./evidence/run_evidence.sh app
+# T2 — capture annotated frames at each FSM stage + timeline plots, into
+#       output/sim/smoking/ . Use --scenario so each run is kept separate.
+./evidence/run_evidence.sh capture --scenario smoking --seconds 120
 ```
 
-The capture tool writes `evidence/output/sim/`:
+Repeat for every scenario (Ctrl+C each `sim` between runs):
+
+```
+scenario_type:=smoking         --scenario smoking
+scenario_type:=vaping          --scenario vaping
+scenario_type:=false_positive  --scenario false_positive
+scenario_type:=target_loss     --scenario target_loss
+```
+
+Each capture writes `evidence/output/sim/<scenario>/`:
 `frame_<STATE>.jpg` (one per FSM transition: PA_WARNING → APPROACH →
-DIRECT_WARNING → …), `montage_states.jpg`, `plot_fsm_timeline.png`,
-`plot_confidence.png`, `incidents.json`, `run.json`.
+DIRECT_WARNING → …), `montage_states.jpg`, `fsm_timeline.{png,pdf}`,
+`confidence_timeline.{png,pdf}`, `timeseries.csv`, `fsm_timeline.csv`,
+`incidents.json`, `run.json`.
+
+Then build the **combined publication figures** (PNG + vector PDF) across all
+captured scenarios:
+
+```bash
+./evidence/run_evidence.sh report
+```
+
+Writes `evidence/output/report/`:
+`fig_fsm_timelines.{png,pdf}` (escalation per scenario, small multiples),
+`fig_confidence_timelines.{png,pdf}` (confidence + FSM markers per scenario),
+`fig_outcomes_by_scenario.{png,pdf}`, and `fig_detection_summary.{png,pdf}`
+(per-class counts + confidence + FPS, from step 1). PDFs are vector — ideal
+for LaTeX; PNGs for Word/Docs.
 
 Screenshot Gazebo, RViz and the admin dashboard (`localhost:8080`) directly
-for the report — the capture tool handles the detection/FSM figures.
+for the report — the toolkit handles the detection/FSM/analysis figures.
 
 ## 3. Incident email + keyframes
 
