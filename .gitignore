@@ -19,3 +19,6 @@ __pycache__/
 cigarette_yolo.pt
 smoke_yolo.pt
 *.part
+
+# External ros2_control plugin (Pi only - see README motor section)
+src/diffdrive_arduino/

@@ -18,8 +18,9 @@ diff_cont:
 
     left_wheel_names: ['left_wheel_joint']
     right_wheel_names: ['right_wheel_joint']
-    wheel_separation: 0.297
-    wheel_radius: 0.033
+    # real robot: 87mm tires, 31cm center-to-center (measured)
+    wheel_separation: 0.31
+    wheel_radius: 0.0435
 
     use_stamped_vel: false
 

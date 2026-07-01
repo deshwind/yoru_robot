@@ -132,9 +132,31 @@ If it reports "SSH refused", enable SSH once on the Pi (keyboard/monitor):
 ./start_server.sh
 ```
 
-Wiring check: motor GPIO pins, wheel geometry and encoder counts are in the
-`l298n_driver_node` section of `compliance_real.yaml`; CCTV RTSP URL and
-room calibration in the `yolo_cctv1`/`transform_cctv1` sections.
+### Motors: Arduino Nano + ros2_control (the actual wiring)
+
+The physical drivetrain is **Pi → Arduino Nano (CH340, `/dev/nano`) → L298N →
+motors + encoders**. The Nano runs *ros_arduino_bridge* firmware (57600 baud,
+`e`/`m`/`o`/`r` protocol) and is driven by the ros2_control hardware plugin
+`diffdrive_arduino/DiffDriveArduinoHardware` (device `/dev/nano`, 1320
+encoder counts/rev measured; wheels 87 mm / 31 cm in `my_controllers.yaml`).
+Stable device names come from udev rules on the Pi: `/dev/nano` (CH340 Nano)
+and `/dev/rplidar` (CP210x lidar) — enumeration order is NOT stable, so never
+use raw `/dev/ttyUSB0` paths. Note: Ubuntu's `brltty` daemon hijacks both
+adapters; it is masked on the Pi.
+
+One-time install on the Pi (the plugin is not vendored in this repo):
+
+```bash
+sudo apt install ros-humble-ros2-control ros-humble-ros2-controllers libserial-dev
+cd ~/yoru_robot/src
+git clone -b humble https://github.com/joshnewans/diffdrive_arduino.git
+cd .. && colcon build --symlink-install
+```
+
+The direct-GPIO `l298n_driver_node` remains in the tree only for wiring
+without the Nano (it also degrades to open-loop if encoder interrupts fail).
+CCTV RTSP URL and room calibration live in the `yolo_cctv1` /
+`transform_cctv1` sections of `compliance_real.yaml`.
 
 ## Admin web dashboard
 

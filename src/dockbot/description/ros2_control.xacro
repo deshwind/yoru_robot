@@ -8,10 +8,14 @@
                 <param name="left_wheel_name">left_wheel_joint</param>
                 <param name="right_wheel_name">right_wheel_joint</param>
                 <param name="loop_rate">30</param>
-                <param name="device">/dev/ttyUSB0</param>
+                <!-- Arduino Nano (CH340) via stable udev symlink /dev/nano,
+                     set by 61-arduino-nano.rules. /dev/ttyUSB0 is the RPLIDAR;
+                     enumeration order is not guaranteed, so use the symlink. -->
+                <param name="device">/dev/nano</param>
                 <param name="baud_rate">57600</param>
                 <param name="timeout_ms">1000</param>
-                <param name="enc_counts_per_rev">3436</param>
+                <!-- measured on this robot: 1320 counts per wheel revolution -->
+                <param name="enc_counts_per_rev">1320</param>
             </hardware>
             <joint name="left_wheel_joint">
                 <command_interface name="velocity">

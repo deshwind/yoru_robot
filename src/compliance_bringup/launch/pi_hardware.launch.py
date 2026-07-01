@@ -60,16 +60,46 @@ def generate_launch_description():
         DeclareLaunchArgument('use_nav2', default_value='true'),
     ]
 
-    # Robot description without ros2_control (the L298N node drives motors)
+    # Robot description WITH ros2_control: motors are driven by the
+    # diffdrive_arduino hardware interface (Arduino Nano on /dev/nano running
+    # ros_arduino_bridge @ 57600; the Nano drives the L298N and reads the
+    # encoders). The direct-GPIO l298n_driver_node is kept in the tree only
+    # for wiring setups without the Nano.
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(dockbot_dir, 'launch', 'rsp.launch.py')),
         launch_arguments={'use_sim_time': 'false',
-                          'use_ros2_control': 'false'}.items())
+                          'use_ros2_control': 'true'}.items())
 
-    motor_driver = Node(
-        package='compliance_core', executable='l298n_driver_node',
-        parameters=[params_file], output='screen')
+    from launch.actions import RegisterEventHandler
+    from launch.event_handlers import OnProcessStart
+    from launch.substitutions import Command
+    from launch_ros.parameter_descriptions import ParameterValue
+
+    xacro_file = os.path.join(dockbot_dir, 'description', 'robot.urdf.xacro')
+    robot_description = ParameterValue(
+        Command(['xacro ', xacro_file,
+                 ' use_ros2_control:=true sim_mode:=false']),
+        value_type=str)
+    controller_params = os.path.join(dockbot_dir, 'config',
+                                     'my_controllers.yaml')
+    controller_manager = Node(
+        package='controller_manager', executable='ros2_control_node',
+        parameters=[{'robot_description': robot_description},
+                    controller_params],
+        output='screen')
+    diff_drive_spawner = Node(
+        package='controller_manager', executable='spawner',
+        arguments=['diff_cont'])
+    joint_broad_spawner = Node(
+        package='controller_manager', executable='spawner',
+        arguments=['joint_broad'])
+    motor_driver = [
+        controller_manager,
+        RegisterEventHandler(OnProcessStart(
+            target_action=controller_manager,
+            on_start=[diff_drive_spawner, joint_broad_spawner])),
+    ]
 
     lidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -127,7 +157,7 @@ def generate_launch_description():
 
     return LaunchDescription(declare_args + [
         rsp,
-        motor_driver,
+        *motor_driver,
         lidar,
         camera_picam,
         camera_usb,
