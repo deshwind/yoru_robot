@@ -50,6 +50,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'camera', default_value='picam',
             description='picam (Pi Camera Module via camera_ros) | usb | none'),
+        DeclareLaunchArgument(
+            'pixel_format', default_value='RGB888',
+            description='Pi Camera pixel format for camera_ros. libcamera '
+                        'auto-selects NV21, which camera_ros cannot encode '
+                        '("Unrecognized image encoding [nv21]" -> no frames). '
+                        'RGB888/BGR888/XRGB8888 are encodable; use BGR888 if '
+                        'colours look swapped.'),
         DeclareLaunchArgument('use_nav2', default_value='true'),
     ]
 
@@ -71,7 +78,8 @@ def generate_launch_description():
     # Pi Camera Module (libcamera) - needs: sudo apt install ros-humble-camera-ros
     camera_picam = Node(
         package='camera_ros', executable='camera_node', name='camera',
-        parameters=[{'width': 640, 'height': 480}],
+        parameters=[{'width': 640, 'height': 480,
+                     'format': LaunchConfiguration('pixel_format')}],
         remappings=[('/camera/camera_info', '/camera/camera_info'),
                     ('/camera/image_raw', '/camera/image_raw')],
         condition=LaunchConfigurationEquals('camera', 'picam'),
