@@ -88,12 +88,16 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_description},
                     controller_params],
         output='screen')
+    # Long timeout: service discovery through the discovery server on a
+    # loaded Pi can exceed the spawner's default 3x10s, which left the
+    # robot with NO controllers (no odom TF -> SLAM dropped every scan,
+    # and no cmd_vel subscriber -> no drive).
     diff_drive_spawner = Node(
         package='controller_manager', executable='spawner',
-        arguments=['diff_cont'])
+        arguments=['diff_cont', '--controller-manager-timeout', '120'])
     joint_broad_spawner = Node(
         package='controller_manager', executable='spawner',
-        arguments=['joint_broad'])
+        arguments=['joint_broad', '--controller-manager-timeout', '120'])
     motor_driver = [
         controller_manager,
         RegisterEventHandler(OnProcessStart(

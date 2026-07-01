@@ -42,12 +42,15 @@ def generate_launch_description():
                     controller_params],
         output='screen')
 
+    # Long timeout: service discovery via the discovery server on a loaded
+    # Pi can exceed the spawner's default retries (no controllers = no odom
+    # TF and no drive).
     diff_drive_spawner = Node(
         package='controller_manager', executable='spawner',
-        arguments=['diff_cont'])
+        arguments=['diff_cont', '--controller-manager-timeout', '120'])
     joint_broad_spawner = Node(
         package='controller_manager', executable='spawner',
-        arguments=['joint_broad'])
+        arguments=['joint_broad', '--controller-manager-timeout', '120'])
 
     # start the spawners only once the controller manager is up
     delayed_diff_drive = RegisterEventHandler(
