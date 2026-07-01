@@ -190,11 +190,14 @@ class EventConfirmationNode(Node):
             c2 = event_class is not None
             c3 = evidence_prox > 0.0
 
-            # C4 / C6: persistence on the same track ID
+            # C4 / C6: persistence on the same track ID. Decay on a missed
+            # frame instead of hard-resetting: small devices flicker at CCTV
+            # distance, and one dropped frame must not erase the evidence.
             if c1 and c2 and c3:
                 self.persistence[track_id] = self.persistence.get(track_id, 0) + 1
             else:
-                self.persistence[track_id] = 0
+                self.persistence[track_id] = max(
+                    0, self.persistence.get(track_id, 0) - 1)
             frames = self.persistence[track_id]
             c4 = frames >= self.persistence_required
             persistence_score = min(frames / float(self.persistence_required), 1.0)

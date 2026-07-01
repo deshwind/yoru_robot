@@ -44,6 +44,14 @@ class PatrolNode(Node):
                                  self.base_callback, 10)
         self.create_subscription(Bool, '/compliance/autonomy_paused',
                                  self.paused_callback, 10)
+        # Saved spots named room*/patrol* (location_manager) override waypoints
+        from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy)
+        latched = QoSProfile(depth=1,
+                             reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.spot_waypoints = []
+        self.create_subscription(String, '/compliance/locations',
+                                 self.locations_callback, latched)
         self.create_timer(1.0, self.tick)
 
         n = len(self.get_parameter('waypoints').value) // 3
@@ -72,6 +80,18 @@ class PatrolNode(Node):
         if self.autonomy_paused and self.navigating:
             self.cancel('admin paused autonomy')
 
+    def locations_callback(self, msg):
+        try:
+            spots = json.loads(msg.data).get('spots', {})
+        except ValueError:
+            return
+        # Deterministic patrol order: sorted by name (room_1, room_2, ...)
+        pts = [pose for name, pose in sorted(spots.items())
+               if name.startswith(('room', 'patrol'))]
+        if pts != self.spot_waypoints:
+            self.spot_waypoints = pts
+            self.get_logger().info(f'Patrol spots updated: {len(pts)} saved')
+
     def allowed(self):
         return (self.get_parameter('enabled').value
                 and self.fsm_state == 'MONITORING'
@@ -84,12 +104,18 @@ class PatrolNode(Node):
         if time.monotonic() < self.next_goal_time:
             return
 
-        waypoints = self.get_parameter('waypoints').value
-        if len(waypoints) < 3:
-            return
-        count = len(waypoints) // 3
-        i = self.waypoint_index % count
-        x, y, yaw = waypoints[3 * i], waypoints[3 * i + 1], waypoints[3 * i + 2]
+        # Saved room/patrol spots take precedence over the static parameter
+        if self.spot_waypoints:
+            count = len(self.spot_waypoints)
+            i = self.waypoint_index % count
+            x, y, yaw = self.spot_waypoints[i]
+        else:
+            waypoints = self.get_parameter('waypoints').value
+            if len(waypoints) < 3:
+                return
+            count = len(waypoints) // 3
+            i = self.waypoint_index % count
+            x, y, yaw = waypoints[3 * i], waypoints[3 * i + 1], waypoints[3 * i + 2]
 
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = 'map'

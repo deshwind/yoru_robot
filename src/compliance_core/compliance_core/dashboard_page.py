@@ -254,6 +254,19 @@ PAGE_HTML = r"""<!DOCTYPE html>
               aspect-ratio:16/9; object-fit:contain; display:block;
               border:1px solid var(--hairline); }
 
+  /* ---------- safety stop banner + spots ---------- */
+  #safetybar { position:fixed; top:0; left:0; right:0; z-index:80;
+    display:none; align-items:center; justify-content:center; gap:16px;
+    padding:12px 18px; background:var(--red); color:#fff;
+    font-weight:700; font-size:14px; box-shadow:0 4px 18px rgba(255,59,48,.45); }
+  #safetybar button { background:#fff; color:var(--red); border:none;
+    border-radius:12px; padding:8px 18px; font-weight:700; }
+  .spotrow { display:flex; align-items:center; gap:8px; padding:8px 4px;
+             border-bottom:1px solid var(--hairline); }
+  .spotrow .nm { flex:1; font-weight:600; }
+  .spotrow .xy { color:var(--dim); font-size:12px; }
+  .spotrow button { padding:7px 14px; font-size:13px; }
+
   /* ---------- evidence / analytics tab ---------- */
   .evbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
            margin-bottom:14px; }
@@ -425,12 +438,32 @@ PAGE_HTML = r"""<!DOCTYPE html>
         <div class="maptools">
           <button id="relocBtn" class="warn" onclick="toggleReloc()">
             &#10166;&nbsp; Relocalise</button>
+          <button onclick="relocaliseAuto()">&#128260;&nbsp; Auto re-localise</button>
           <button onclick="clearCostmaps()">&#129529;&nbsp; Clear costmaps</button>
+          <button onclick="saveMap()">&#128190;&nbsp; Save map</button>
         </div>
         <p class="note">Blue arrow = robot. Red dot = latest violation target.
-          Relocalise tells the localisation system where the robot really is
-          (use it when the robot is lost on the map). On the real robot this
-          feeds AMCL; in simulation mapping mode SLAM localises itself.</p>
+          Relocalise = tap the robot's true spot on the map (most reliable).
+          Auto re-localise = the robot spins and finds itself (kidnapped-robot
+          recovery; can pick the wrong twin spot in symmetric rooms).
+          Save map stores the SLAM map on the robot for localization mode.
+          <span id="locstatus"></span></p>
+      </div>
+
+      <div class="panel glass" style="margin-top:14px">
+        <h2>Saved Spots</h2>
+        <div class="maptools" style="margin-top:0">
+          <input id="spotName" placeholder="dock, room_1, start..."
+                 style="flex:2; min-width:150px; padding:10px 14px;
+                        border-radius:14px; border:1px solid var(--hairline);
+                        background:var(--glass2); color:var(--txt);">
+          <button class="primary" onclick="saveSpot()">&#128204;&nbsp; Save spot here</button>
+        </div>
+        <div id="spotList" style="margin-top:10px"></div>
+        <p class="note">Drive the robot to a place, type a name, save.
+          <b>dock</b>* spots become the return-to-base target;
+          <b>room</b>*/<b>patrol</b>* spots become patrol waypoints;
+          any spot can be a Go-to destination.</p>
       </div>
     </div>
 
@@ -508,6 +541,11 @@ PAGE_HTML = r"""<!DOCTYPE html>
 </div>
 
 <div id="toast"></div>
+<div id="safetybar">
+  <span>&#9888;&#65039; SAFETY STOP &mdash; connection to robot was lost.
+        Robot is frozen until you resume.</span>
+  <button onclick="safetyResume()">Resume robot</button>
+</div>
 
 <script>
 let token = localStorage.getItem('crtoken') || '';
@@ -564,7 +602,7 @@ function go(view) {
   document.querySelectorAll('[data-view]').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
   document.getElementById('viewTitle').textContent = TITLES[view];
-  if (view === 'map') { mapVisible = true; loadMapInfo(true); }
+  if (view === 'map') { mapVisible = true; loadMapInfo(true); refreshSpots(); }
   else mapVisible = false;
   camVisible = (view === 'cameras');
   if (view === 'evidence') loadEvidence();
@@ -978,10 +1016,86 @@ async function loadEvidence() {
   evGallery('ev-galS', 'sim', (d.images.sim || []).filter(n => n.endsWith('.jpg')));
 }
 
+/* ------------- saved spots + safety + relocalise ------------- */
+async function saveSpot() {
+  const name = document.getElementById('spotName').value.trim();
+  if (!name) { toast('Type a spot name first'); return; }
+  await api('/api/spots/save', { name });
+  document.getElementById('spotName').value = '';
+  toast('Saving spot "' + name + '"...');
+  setTimeout(refreshSpots, 800);
+}
+async function gotoSpot(name) {
+  await api('/api/spots/goto', { name });
+  toast('Robot heading to ' + name);
+}
+async function deleteSpot(name) {
+  if (!confirm('Delete spot "' + name + '"?')) return;
+  await api('/api/spots/delete', { name });
+  setTimeout(refreshSpots, 600);
+}
+async function saveMap() {
+  await api('/api/map/save', {});
+  toast('Saving map on the robot...');
+}
+async function relocaliseAuto() {
+  await api('/api/relocalise_auto', {});
+  toast('Auto re-localise: robot will spin to find itself');
+}
+async function safetyResume() {
+  await api('/api/safety/resume', {});
+  toast('Resume sent');
+}
+
+function renderSpots(spots) {
+  const el = document.getElementById('spotList');
+  const names = Object.keys(spots).sort();
+  if (!names.length) {
+    el.innerHTML = '<span class="note">No spots saved yet.</span>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const n of names) {
+    const [x, y] = spots[n];
+    const row = document.createElement('div');
+    row.className = 'spotrow';
+    const nm = document.createElement('span');
+    nm.className = 'nm'; nm.textContent = n;
+    const xy = document.createElement('span');
+    xy.className = 'xy'; xy.textContent = `(${x}, ${y})`;
+    const go = document.createElement('button');
+    go.className = 'primary'; go.textContent = 'Go';
+    go.onclick = () => gotoSpot(n);
+    const del = document.createElement('button');
+    del.className = 'danger'; del.textContent = '×';
+    del.onclick = () => deleteSpot(n);
+    row.append(nm, xy, go, del);
+    el.appendChild(row);
+  }
+}
+
+async function refreshSpots() {
+  let d;
+  try { d = await api('/api/spots'); } catch (e) { return; }
+  // Safety banner is global: connection loss freezes the robot until resume
+  const stopped = d.safety && d.safety.stopped;
+  document.getElementById('safetybar').style.display = stopped ? 'flex' : 'none';
+  if (!mapVisible) return;
+  renderSpots(d.spots || {});
+  const ls = d.localization || {};
+  const el = document.getElementById('locstatus');
+  if (ls.state) {
+    el.textContent = ` Localization: ${ls.state}` +
+      (ls.std_xy != null ? ` (±${ls.std_xy} m)` : '');
+    el.style.color = ls.state === 'ok' ? '' : 'var(--orange)';
+  }
+}
+
 setInterval(refresh, 2000);
 setInterval(loadIncidents, 5000);
 setInterval(() => loadMapInfo(false), 1000);
 setInterval(refreshCams, 350);
+setInterval(refreshSpots, 2000);
 
 const hashParams = new URLSearchParams(location.hash.slice(1));
 const startView = hashParams.get('view');

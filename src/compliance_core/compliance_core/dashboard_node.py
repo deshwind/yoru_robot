@@ -81,6 +81,40 @@ class DashboardNode(Node):
         self.initialpose_pub = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
 
+        # Saved spots / map save / safety / auto-relocalise (Pi-side nodes)
+        self.save_spot_pub = self.create_publisher(
+            String, '/compliance/save_spot', 10)
+        self.delete_spot_pub = self.create_publisher(
+            String, '/compliance/delete_spot', 10)
+        self.goto_spot_pub = self.create_publisher(
+            String, '/compliance/goto_spot', 10)
+        self.save_map_pub = self.create_publisher(
+            String, '/compliance/save_map', 10)
+        self.safety_resume_pub = self.create_publisher(
+            Bool, '/compliance/safety_resume', 10)
+        self.relocalise_pub = self.create_publisher(
+            Bool, '/compliance/relocalise_request', 10)
+        # Heartbeat: the Pi's safety monitor latches an e-stop when this stops
+        self.heartbeat_pub = self.create_publisher(
+            Bool, '/compliance/heartbeat', 10)
+        self.create_timer(0.5, lambda: self.heartbeat_pub.publish(Bool(data=True)))
+
+        self.spots = {}
+        self.location_status = {}
+        self.safety_status = {}
+        self.loc_monitor_status = {}
+        latched = QoSProfile(depth=1,
+                             reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(String, '/compliance/locations',
+                                 self.locations_callback, latched)
+        self.create_subscription(String, '/compliance/location_status',
+                                 lambda m: self._json_into('location_status', m), 10)
+        self.create_subscription(String, '/compliance/safety_status',
+                                 lambda m: self._json_into('safety_status', m), 10)
+        self.create_subscription(String, '/compliance/localization_status',
+                                 lambda m: self._json_into('loc_monitor_status', m), 10)
+
         # Live map (slam_toolbox publishes /map latched / transient local)
         self.map_png = b''
         self.map_meta = {}
@@ -215,6 +249,20 @@ class DashboardNode(Node):
     def target_callback(self, msg):
         self.latest_target_xy = (round(msg.pose.position.x, 2),
                                  round(msg.pose.position.y, 2))
+
+    def locations_callback(self, msg):
+        try:
+            with self.lock:
+                self.spots = json.loads(msg.data).get('spots', {})
+        except ValueError:
+            pass
+
+    def _json_into(self, attr, msg):
+        try:
+            with self.lock:
+                setattr(self, attr, json.loads(msg.data))
+        except ValueError:
+            pass
 
     def map_callback(self, msg):
         """Renders the occupancy grid to a PNG (free=white, occupied=dark,
@@ -419,6 +467,48 @@ class DashboardNode(Node):
                 pass
         return default
 
+    def api_spots(self):
+        with self.lock:
+            return {'spots': dict(self.spots),
+                    'status': dict(self.location_status),
+                    'safety': dict(self.safety_status),
+                    'localization': dict(self.loc_monitor_status)}
+
+    def api_spot_save(self, body):
+        name = str(body.get('name', '')).strip()
+        if not name:
+            return {'ok': False, 'error': 'name required'}
+        self.save_spot_pub.publish(String(data=name))
+        self.get_logger().info(f'DASHBOARD: save spot "{name}"')
+        return {'ok': True}
+
+    def api_spot_delete(self, body):
+        name = str(body.get('name', '')).strip()
+        self.delete_spot_pub.publish(String(data=name))
+        return {'ok': True}
+
+    def api_spot_goto(self, body):
+        name = str(body.get('name', '')).strip()
+        self.goto_spot_pub.publish(String(data=name))
+        self.get_logger().warn(f'DASHBOARD: go to spot "{name}"')
+        return {'ok': True}
+
+    def api_map_save(self, body):
+        name = str(body.get('name', '')).strip()
+        self.save_map_pub.publish(String(data=name))
+        self.get_logger().warn('DASHBOARD: save map requested')
+        return {'ok': True}
+
+    def api_safety_resume(self):
+        self.safety_resume_pub.publish(Bool(data=True))
+        self.get_logger().warn('DASHBOARD: safety-stop resume requested')
+        return {'ok': True}
+
+    def api_relocalise_auto(self):
+        self.relocalise_pub.publish(Bool(data=True))
+        self.get_logger().warn('DASHBOARD: auto global relocalisation requested')
+        return {'ok': True}
+
     def api_set_mode(self, body):
         paused = bool(body.get('paused'))
         self.pause_pub.publish(Bool(data=paused))
@@ -608,6 +698,8 @@ class DashboardNode(Node):
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     self.wfile.write(png)
+                elif self.path == '/api/spots':
+                    self.send_json(node.api_spots())
                 elif self.path == '/api/evidence/data':
                     self.send_json(node.api_evidence_data())
                 elif self.path.startswith('/api/evidence/img/'):
@@ -653,6 +745,18 @@ class DashboardNode(Node):
                     self.send_json(node.api_relocalise(body))
                 elif self.path == '/api/clear_costmaps':
                     self.send_json(node.api_clear_costmaps())
+                elif self.path == '/api/spots/save':
+                    self.send_json(node.api_spot_save(body))
+                elif self.path == '/api/spots/delete':
+                    self.send_json(node.api_spot_delete(body))
+                elif self.path == '/api/spots/goto':
+                    self.send_json(node.api_spot_goto(body))
+                elif self.path == '/api/map/save':
+                    self.send_json(node.api_map_save(body))
+                elif self.path == '/api/safety/resume':
+                    self.send_json(node.api_safety_resume())
+                elif self.path == '/api/relocalise_auto':
+                    self.send_json(node.api_relocalise_auto())
                 else:
                     self.send_json({'error': 'not found'}, HTTPStatus.NOT_FOUND)
 

@@ -41,6 +41,9 @@ setup(
             'admin_joy_node = compliance_core.admin_joy_node:main',
             'dashboard_node = compliance_core.dashboard_node:main',
             'camera_publisher_node = compliance_core.camera_publisher_node:main',
+            'location_manager_node = compliance_core.location_manager_node:main',
+            'safety_monitor_node = compliance_core.safety_monitor_node:main',
+            'localization_monitor_node = compliance_core.localization_monitor_node:main',
         ],
     },
 )

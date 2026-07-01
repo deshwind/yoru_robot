@@ -131,6 +131,21 @@ def generate_launch_description():
         package='compliance_core', executable='audio_warning_node',
         parameters=[params_file], output='screen')
 
+    # Saved spots / map saving / startup pose memory (dashboard Map tab)
+    location_manager = Node(
+        package='compliance_core', executable='location_manager_node',
+        parameters=[params_file], output='screen')
+
+    # Wi-Fi watchdog: latched e-stop when the laptop heartbeat disappears
+    safety_monitor = Node(
+        package='compliance_core', executable='safety_monitor_node',
+        parameters=[params_file], output='screen')
+
+    # Kidnapped-robot recovery: AMCL global relocalise + spin when lost
+    localization_monitor = Node(
+        package='compliance_core', executable='localization_monitor_node',
+        parameters=[params_file], output='screen')
+
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(dockbot_dir, 'launch', 'localization_launch.py')),
@@ -163,6 +178,9 @@ def generate_launch_description():
         camera_usb,
         twist_mux,
         audio,
+        location_manager,
+        safety_monitor,
+        localization_monitor,
         TimerAction(period=3.0, actions=[localization, mapping]),
         TimerAction(period=6.0, actions=[nav2]),
     ])

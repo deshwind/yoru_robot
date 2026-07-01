@@ -52,6 +52,14 @@ class ReturnToBaseNode(Node):
                                  self.request_callback, 10)
         self.create_subscription(String, '/compliance/fsm_status',
                                  self.fsm_callback, 10)
+        # Saved spots named dock* (location_manager) override the bases param
+        from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy)
+        latched = QoSProfile(depth=1,
+                             reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.dock_spots = []
+        self.create_subscription(String, '/compliance/locations',
+                                 self.locations_callback, latched)
         self.create_timer(1.0, self.tick)
 
         n = len(self.get_parameter('bases').value) // 3
@@ -79,6 +87,17 @@ class ReturnToBaseNode(Node):
         except ValueError:
             pass
 
+    def locations_callback(self, msg):
+        try:
+            spots = json.loads(msg.data).get('spots', {})
+        except ValueError:
+            return
+        docks = [pose for name, pose in spots.items()
+                 if name.startswith('dock') or name in ('base', 'home')]
+        if docks != self.dock_spots:
+            self.dock_spots = docks
+            self.get_logger().info(f'Dock spots updated: {len(docks)} saved')
+
     def robot_xy(self):
         try:
             tf = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
@@ -103,10 +122,15 @@ class ReturnToBaseNode(Node):
         if robot is None:
             return
 
-        bases = self.get_parameter('bases').value
+        # Prefer saved dock spots; fall back to the static bases parameter
+        if self.dock_spots:
+            candidates = [tuple(p) for p in self.dock_spots]
+        else:
+            bases = self.get_parameter('bases').value
+            candidates = [(bases[3 * i], bases[3 * i + 1], bases[3 * i + 2])
+                          for i in range(len(bases) // 3)]
         nearest, best_d = None, float('inf')
-        for i in range(len(bases) // 3):
-            x, y, yaw = bases[3 * i], bases[3 * i + 1], bases[3 * i + 2]
+        for x, y, yaw in candidates:
             d = math.hypot(x - robot[0], y - robot[1])
             if d < best_d:
                 nearest, best_d = (x, y, yaw), d
