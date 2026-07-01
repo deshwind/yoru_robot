@@ -89,10 +89,21 @@ class L298nDriverNode(Node):
         self.right_dir = 1
         le = int(self.get_parameter('left_encoder_pin').value)
         re = int(self.get_parameter('right_encoder_pin').value)
-        GPIO.setup(le, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(re, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(le, GPIO.BOTH, callback=self._left_tick)
-        GPIO.add_event_detect(re, GPIO.BOTH, callback=self._right_tick)
+        # Encoder interrupts: RPi.GPIO edge detection fails on some kernels
+        # (Ubuntu 22.04 Pi, "Failed to add edge detection"). Degrade to
+        # OPEN-LOOP control rather than crashing, so the robot still drives.
+        self.have_encoders = True
+        try:
+            GPIO.setup(le, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.setup(re, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.add_event_detect(le, GPIO.BOTH, callback=self._left_tick)
+            GPIO.add_event_detect(re, GPIO.BOTH, callback=self._right_tick)
+        except RuntimeError as exc:
+            self.have_encoders = False
+            self.get_logger().warn(
+                f'Encoder edge detection unavailable ({exc}). Running OPEN-LOOP '
+                '(feed-forward PWM, commanded odometry) - motors drive but '
+                'odometry drifts. Install lgpio/pigpio for closed-loop PID.')
 
         kp = self.get_parameter('kp').value
         ki = self.get_parameter('ki').value
@@ -113,7 +124,8 @@ class L298nDriverNode(Node):
                                  self.cmd_callback, 10)
         self.create_timer(0.02, self.control_loop)  # 50 Hz (20 ms)
 
-        self.get_logger().info('L298N driver ready (PWM 1 kHz, PID 50 Hz)')
+        mode = 'closed-loop PID' if self.have_encoders else 'OPEN-LOOP (no encoders)'
+        self.get_logger().info(f'L298N driver ready (PWM 1 kHz, 50 Hz, {mode})')
 
     def _left_tick(self, _channel):
         self.left_ticks += self.left_dir
@@ -138,18 +150,29 @@ class L298nDriverNode(Node):
         radius = self.get_parameter('wheel_radius').value
         m_per_tick = 2.0 * math.pi * radius / ticks_per_rev
 
-        d_left = (self.left_ticks - self.prev_left_ticks) * m_per_tick
-        d_right = (self.right_ticks - self.prev_right_ticks) * m_per_tick
-        self.prev_left_ticks = self.left_ticks
-        self.prev_right_ticks = self.right_ticks
-        v_left = d_left / dt
-        v_right = d_right / dt
-
         max_speed = self.get_parameter('max_wheel_speed').value
         ff_left = 100.0 * self.target_left / max_speed
         ff_right = 100.0 * self.target_right / max_speed
-        duty_left = ff_left + self.pid_left.step(self.target_left - v_left, dt)
-        duty_right = ff_right + self.pid_right.step(self.target_right - v_right, dt)
+
+        if self.have_encoders:
+            d_left = (self.left_ticks - self.prev_left_ticks) * m_per_tick
+            d_right = (self.right_ticks - self.prev_right_ticks) * m_per_tick
+            self.prev_left_ticks = self.left_ticks
+            self.prev_right_ticks = self.right_ticks
+            v_left = d_left / dt
+            v_right = d_right / dt
+            duty_left = ff_left + self.pid_left.step(self.target_left - v_left, dt)
+            duty_right = ff_right + self.pid_right.step(self.target_right - v_right, dt)
+        else:
+            # Open-loop: feed-forward PWM; assume the wheels track the command
+            # so odometry is dead-reckoned from the target speeds.
+            v_left = self.target_left
+            v_right = self.target_right
+            d_left = v_left * dt
+            d_right = v_right * dt
+            duty_left = ff_left
+            duty_right = ff_right
+
         self._set_motor('a', duty_left)
         self._set_motor('b', duty_right)
         self.left_dir = 1 if duty_left >= 0 else -1
