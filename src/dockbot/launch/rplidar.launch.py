@@ -11,7 +11,10 @@ def generate_launch_description():
             executable='rplidar_composition',
             output='screen',
             parameters=[{
-                'serial_port': '/dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3:1.0-port0',
+                # Stable symlink from 60-rplidar.rules (CP210x vendor/product),
+                # so it works regardless of which USB port the lidar uses.
+                'serial_port': '/dev/rplidar',
+                'serial_baudrate': 115200,
                 'frame_id': 'laser_frame',
                 'angle_compensate': True,
                 'scan_mode': 'Standard'
