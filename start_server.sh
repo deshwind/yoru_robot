@@ -14,25 +14,14 @@ source ./ros_network.env
 
 echo "========================================"
 echo "  This laptop:  $(hostname).local  ($(hostname -I | awk '{print $1}'))"
-echo "  Discovery server: ${ROS_DISCOVERY_SERVER}"
-echo "  (the Pi resolves this laptop by name, so its IP can change freely)"
+echo "  Discovery server (on the Pi): ${ROS_DISCOVERY_SERVER}"
+echo "  Start the Pi first: ./start_pi.sh (it hosts the discovery server)"
 echo "========================================"
-
-# Start the FastDDS discovery server (lets Pi and laptop find each other
-# reliably on Wi-Fi without depending on multicast).
-pkill -f "fastdds discovery" 2>/dev/null || true
-fastdds discovery -i 0 -p 11811 &
-DISCOVERY_PID=$!
-echo "FastDDS discovery server started (PID $DISCOVERY_PID)"
-sleep 1
 
 if [ ! -f install/setup.bash ]; then
     echo "First run: building workspace..."
     colcon build --symlink-install
 fi
 source install/setup.bash
-
-# Kill discovery server on exit
-trap "kill $DISCOVERY_PID 2>/dev/null; true" EXIT
 
 exec ros2 launch compliance_bringup server.launch.py "$@"
